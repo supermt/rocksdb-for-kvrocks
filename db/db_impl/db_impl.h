@@ -735,7 +735,7 @@ class DBImpl : public DB {
       const Slice* end, bool exclusive, bool disallow_trivial_move,
       uint64_t max_file_num_to_ignore, const std::string& trim_ts,
       std::vector<std::string>* result_names = nullptr,
-      bool schedule_only = false, Compaction* c = nullptr);
+      bool schedule_only = false, Compaction** c = nullptr);
 
   // Return an internal iterator over the current state of the database.
   // The keys of this iterator are internal keys (see format.h).
@@ -1369,7 +1369,7 @@ class DBImpl : public DB {
       const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
       const Slice* begin, const Slice* end, const std::string& trim_ts,
       std::vector<std::string>* compact_results = nullptr,
-      bool scheduled_only = false, Compaction* c = nullptr);
+      bool scheduled_only = false, Compaction** c = nullptr);
 
   // The following two functions can only be called when:
   // 1. WriteThread::Writer::EnterUnbatched() is used.

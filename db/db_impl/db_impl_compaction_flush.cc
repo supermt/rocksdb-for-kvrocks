@@ -918,11 +918,15 @@ Status DBImpl::EstimateCompactRange(
   Status s;
   if (ts_sz == 0) {
     s = CompactRangeInternal(options, column_family, begin, end, "" /*trim_ts*/,
-                             nullptr, true, c);
-    for (auto& input : *c->inputs()) {
-      input_file_number->emplace_back(input.level, input.files.size());
+                             nullptr, true, &c);
+    assert(c!= nullptr);
+    if (c!=nullptr){
+      for (auto& input : *c->inputs()) {
+        input_file_number->emplace_back(input.level, input.files.size());
+      }
+      return Status::OK();
     }
-    return Status::OK();
+    return Status::NotFound("No compaction has been picked");
   }
 
   std::string begin_str;
@@ -943,11 +947,15 @@ Status DBImpl::EstimateCompactRange(
   Slice* begin_with_ts = begin ? &input_begin : nullptr;
   Slice* end_with_ts = end ? &input_end : nullptr;
   s = CompactRangeInternal(options, column_family, begin, end, "" /*trim_ts*/,
-                           nullptr, true, c);
-  for (auto& input : *c->inputs()) {
-    input_file_number->emplace_back(input.level, input.files.size());
+                           nullptr, true, &c);
+  if (c!=nullptr){
+    for (auto& input : *c->inputs()) {
+      input_file_number->emplace_back(input.level, input.files.size());
+    }
+    return Status::OK();
   }
-  return Status::OK();
+  return Status::NotFound("No compaction has been picked");
+
 }
 Status DBImpl::CompactRange(const CompactRangeOptions& options,
                             ColumnFamilyHandle* column_family,
@@ -1054,7 +1062,7 @@ Status DBImpl::CompactRangeInternal(const CompactRangeOptions& options,
                                     const Slice* begin, const Slice* end,
                                     const std::string& trim_ts,
                                     std::vector<std::string>* compact_results,
-                                    bool scheduled_only, Compaction* c) {
+                                    bool scheduled_only, Compaction** c) {
   auto cfh = static_cast_with_check<ColumnFamilyHandleImpl>(column_family);
   auto cfd = cfh->cfd();
 
@@ -1092,7 +1100,7 @@ Status DBImpl::CompactRangeInternal(const CompactRangeOptions& options,
     CleanupSuperVersion(super_version);
   }
 
-  if (s.ok() && flush_needed) {
+  if (s.ok() && flush_needed && !scheduled_only) {
     FlushOptions fo;
     fo.allow_write_stall = options.allow_write_stall;
     if (immutable_db_options_.atomic_flush) {
@@ -1859,7 +1867,7 @@ Status DBImpl::RunManualCompaction(
     const CompactRangeOptions& compact_range_options, const Slice* begin,
     const Slice* end, bool exclusive, bool disallow_trivial_move,
     uint64_t max_file_num_to_ignore, const std::string& trim_ts,
-    std::vector<std::string>* result_names, bool schedule_only, Compaction* c) {
+    std::vector<std::string>* result_names, bool schedule_only, Compaction** c) {
   assert(input_level == ColumnFamilyData::kCompactAllLevels ||
          input_level >= 0);
 
@@ -1924,15 +1932,16 @@ Status DBImpl::RunManualCompaction(
   // However, only one of them will actually schedule compaction, while
   // others will wait on a condition variable until it completes.
   if (schedule_only) {
-    c = manual.cfd->CompactRange(
+    *c = manual.cfd->CompactRange(
         *manual.cfd->GetLatestMutableCFOptions(), mutable_db_options_,
         manual.input_level, manual.output_level, compact_range_options,
         manual.begin, manual.end, &manual.manual_end, &manual_conflict,
         max_file_num_to_ignore, trim_ts);
-    if (c != nullptr) {
+    if (*c != nullptr) {
       return Status::OK();
-    } else
-      return Status::NotFound("No Compaction can be scheduled");
+    }
+    c = nullptr;
+    return Status::NotFound("No Compaction can be scheduled");
   }
   AddManualCompaction(&manual);
   TEST_SYNC_POINT_CALLBACK("DBImpl::RunManualCompaction:NotScheduled", &mutex_);

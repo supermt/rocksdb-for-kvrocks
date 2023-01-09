@@ -83,6 +83,10 @@ class CompactedDBImpl : public DBImpl {
     return Status::NotSupported("Not supported in compacted db mode.");
   }
   using DBImpl::CompactRange;
+  Status EstimateCompactRange(
+      const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
+      const Slice* begin, const Slice* end,
+      std::vector<std::pair<int, int>>* input_file_number) override;
   virtual Status CompactRange(
       const CompactRangeOptions& /*options*/,
       ColumnFamilyHandle* /*column_family*/, const Slice* /*begin*/,

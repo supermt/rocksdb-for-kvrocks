@@ -280,6 +280,12 @@ class StackableDB : public DB {
   }
 
   using DB::CompactRange;
+  virtual Status EstimateCompactRange(
+      const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
+      const Slice* begin, const Slice* end,
+      std::vector<std::pair<int, int>>* input_file_number) override {
+    return Status::NotSupported();
+  }
   virtual Status CompactRange(
       const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
       const Slice* begin, const Slice* end,

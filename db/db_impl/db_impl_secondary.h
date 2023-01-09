@@ -174,6 +174,12 @@ class DBImplSecondary : public DBImpl {
   }
 
   using DBImpl::CompactRange;
+  virtual Status EstimateCompactRange(
+      const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
+      const Slice* begin, const Slice* end,
+      std::vector<std::pair<int, int>>* input_file_number) override{
+    return Status::NotSupported();
+  }
   Status CompactRange(const CompactRangeOptions& /*options*/,
                       ColumnFamilyHandle* /*column_family*/,
                       const Slice* /*begin*/, const Slice* /*end*/,

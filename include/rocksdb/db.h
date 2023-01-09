@@ -282,7 +282,6 @@ class DB {
       const std::vector<ColumnFamilyDescriptor>& column_families,
       std::vector<ColumnFamilyHandle*>* handles, DB** dbptr);
 
-
   // Open DB and run the compaction.
   // It's a read-only operation, the result won't be installed to the DB, it
   // will be output to the `output_directory`. The API should only be used with
@@ -1270,14 +1269,18 @@ class DB {
   // the files. In this case, client could set options.change_level to true, to
   // move the files back to the minimum level capable of holding the data set
   // or a given level (specified by non-negative options.target_level).
-    virtual Status CompactRange(const CompactRangeOptions& options,
+  virtual Status EstimateCompactRange(
+      const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
+      const Slice* begin, const Slice* end,
+      std::vector<std::pair<int, int>>* input_file_number) = 0;
+  virtual Status CompactRange(const CompactRangeOptions& options,
                               ColumnFamilyHandle* column_family,
                               const Slice* begin, const Slice* end,
                               std::vector<std::string>* result_files) = 0;
   virtual Status CompactRange(const CompactRangeOptions& options,
                               ColumnFamilyHandle* column_family,
                               const Slice* begin, const Slice* end) {
-    return CompactRange(options,column_family, begin, end,nullptr);
+    return CompactRange(options, column_family, begin, end, nullptr);
   }
   virtual Status CompactRange(const CompactRangeOptions& options,
                               const Slice* begin, const Slice* end) {

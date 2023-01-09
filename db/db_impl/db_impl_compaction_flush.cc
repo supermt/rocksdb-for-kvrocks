@@ -907,6 +907,48 @@ void DBImpl::NotifyOnFlushCompleted(
 #endif  // ROCKSDB_LITE
 }
 
+Status DBImpl::EstimateCompactRange(
+    const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
+    const Slice* begin, const Slice* end,
+    std::vector<std::pair<int, int>>* input_file_number) {
+  const Comparator* const ucmp = column_family->GetComparator();
+  assert(ucmp);
+  size_t ts_sz = ucmp->timestamp_size();
+  Compaction* c=nullptr;
+  Status s;
+  if (ts_sz == 0) {
+    s = CompactRangeInternal(options, column_family, begin, end, "" /*trim_ts*/,
+                             nullptr, true, c);
+    for (auto& input : *c->inputs()) {
+      input_file_number->emplace_back(input.level, input.files.size());
+    }
+    return Status::OK();
+  }
+
+  std::string begin_str;
+  std::string end_str;
+
+  // CompactRange compact all keys: [begin, end] inclusively. Add maximum
+  // timestamp to include all `begin` keys, and add minimal timestamp to include
+  // all `end` keys.
+  if (begin != nullptr) {
+    AppendKeyWithMaxTimestamp(&begin_str, *begin, ts_sz);
+  }
+  if (end != nullptr) {
+    AppendKeyWithMinTimestamp(&end_str, *end, ts_sz);
+  }
+  Slice input_begin(begin_str);
+  Slice input_end(end_str);
+
+  Slice* begin_with_ts = begin ? &input_begin : nullptr;
+  Slice* end_with_ts = end ? &input_end : nullptr;
+  s = CompactRangeInternal(options, column_family, begin, end, "" /*trim_ts*/,
+                           nullptr, true, c);
+  for (auto& input : *c->inputs()) {
+    input_file_number->emplace_back(input.level, input.files.size());
+  }
+  return Status::OK();
+}
 Status DBImpl::CompactRange(const CompactRangeOptions& options,
                             ColumnFamilyHandle* column_family,
                             const Slice* begin_without_ts,
@@ -1011,7 +1053,8 @@ Status DBImpl::CompactRangeInternal(const CompactRangeOptions& options,
                                     ColumnFamilyHandle* column_family,
                                     const Slice* begin, const Slice* end,
                                     const std::string& trim_ts,
-                                    std::vector<std::string>* compact_results) {
+                                    std::vector<std::string>* compact_results,
+                                    bool scheduled_only, Compaction* c) {
   auto cfh = static_cast_with_check<ColumnFamilyHandleImpl>(column_family);
   auto cfd = cfh->cfd();
 
@@ -1083,7 +1126,10 @@ Status DBImpl::CompactRangeInternal(const CompactRangeOptions& options,
     s = RunManualCompaction(cfd, ColumnFamilyData::kCompactAllLevels,
                             final_output_level, options, begin, end, exclusive,
                             false, std::numeric_limits<uint64_t>::max(),
-                            trim_ts, compact_results);
+                            trim_ts, compact_results, scheduled_only, c);
+    if (scheduled_only) {
+      return s;
+    }
   } else {
     int first_overlapped_level = kInvalidLevel;
     int max_overlapped_level = kInvalidLevel;
@@ -1176,7 +1222,10 @@ Status DBImpl::CompactRangeInternal(const CompactRangeOptions& options,
         s = RunManualCompaction(cfd, level, output_level, options, begin, end,
                                 exclusive, disallow_trivial_move,
                                 max_file_num_to_ignore, trim_ts,
-                                compact_results);
+                                compact_results, scheduled_only, c);
+        if (scheduled_only) {
+          return s;
+        }
         if (!s.ok()) {
           break;
         }
@@ -1810,7 +1859,7 @@ Status DBImpl::RunManualCompaction(
     const CompactRangeOptions& compact_range_options, const Slice* begin,
     const Slice* end, bool exclusive, bool disallow_trivial_move,
     uint64_t max_file_num_to_ignore, const std::string& trim_ts,
-    std::vector<std::string>* result_names) {
+    std::vector<std::string>* result_names, bool schedule_only, Compaction* c) {
   assert(input_level == ColumnFamilyData::kCompactAllLevels ||
          input_level >= 0);
 
@@ -1874,7 +1923,17 @@ Status DBImpl::RunManualCompaction(
   // RunManualCompaction() from getting to the second while loop below.
   // However, only one of them will actually schedule compaction, while
   // others will wait on a condition variable until it completes.
-
+  if (schedule_only) {
+    c = manual.cfd->CompactRange(
+        *manual.cfd->GetLatestMutableCFOptions(), mutable_db_options_,
+        manual.input_level, manual.output_level, compact_range_options,
+        manual.begin, manual.end, &manual.manual_end, &manual_conflict,
+        max_file_num_to_ignore, trim_ts);
+    if (c != nullptr) {
+      return Status::OK();
+    } else
+      return Status::NotFound("No Compaction can be scheduled");
+  }
   AddManualCompaction(&manual);
   TEST_SYNC_POINT_CALLBACK("DBImpl::RunManualCompaction:NotScheduled", &mutex_);
   if (exclusive) {

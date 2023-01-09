@@ -252,6 +252,12 @@ Status CompactedDBImpl::Open(const Options& options,
   }
   return s;
 }
+Status CompactedDBImpl::EstimateCompactRange(
+    const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
+    const Slice* begin, const Slice* end,
+    std::vector<std::pair<int, int>>* input_file_number) {
+  return Status::NotSupported();
+}
 
 }  // namespace ROCKSDB_NAMESPACE
 #endif  // ROCKSDB_LITE

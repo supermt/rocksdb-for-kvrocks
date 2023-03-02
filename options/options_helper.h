@@ -16,14 +16,6 @@
 #include "rocksdb/table.h"
 
 namespace ROCKSDB_NAMESPACE {
-struct ColumnFamilyOptions;
-struct ConfigOptions;
-struct DBOptions;
-struct ImmutableCFOptions;
-struct ImmutableDBOptions;
-struct MutableDBOptions;
-struct MutableCFOptions;
-struct Options;
 
 std::vector<CompressionType> GetSupportedCompressions();
 

@@ -57,6 +57,14 @@ class InternalKeyComparator;
 class WalFilter;
 class FileSystem;
 
+struct ColumnFamilyOptions;
+struct ConfigOptions;
+struct DBOptions;
+struct ImmutableCFOptions;
+struct ImmutableDBOptions;
+struct MutableDBOptions;
+struct MutableCFOptions;
+
 struct Options;
 struct DbPath;
 

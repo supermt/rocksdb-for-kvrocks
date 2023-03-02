@@ -50,8 +50,6 @@ class IntTblPropCollectorFactory {
   virtual const char* Name() const = 0;
 };
 
-using IntTblPropCollectorFactories =
-    std::vector<std::unique_ptr<IntTblPropCollectorFactory>>;
 
 // When rocksdb creates a new table, it will encode all "user keys" into
 // "internal keys", which contains meta information of a given entry.

@@ -924,7 +924,19 @@ ImmutableOptions::ImmutableOptions(const ImmutableDBOptions& db_options,
 ImmutableOptions::ImmutableOptions(const ImmutableDBOptions& db_options,
                                    const ImmutableCFOptions& cf_options)
     : ImmutableDBOptions(db_options), ImmutableCFOptions(cf_options) {}
+void ImmutableOptions::GetIntTblPropCollectorFactory(
+    const ImmutableCFOptions& ioptions,
+    IntTblPropCollectorFactories* int_tbl_prop_collector_factories) {
+  assert(int_tbl_prop_collector_factories);
 
+  auto& collector_factories = ioptions.table_properties_collector_factories;
+  for (size_t i = 0; i < ioptions.table_properties_collector_factories.size();
+       ++i) {
+    assert(collector_factories[i]);
+    int_tbl_prop_collector_factories->emplace_back(
+        new UserKeyTablePropertiesCollectorFactory(collector_factories[i]));
+  }
+}
 // Multiple two operands. If they overflow, return op1.
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2) {
   if (op1 == 0 || op2 <= 0) {
@@ -939,9 +951,9 @@ uint64_t MultiplyCheckOverflow(uint64_t op1, double op2) {
 // when level_compaction_dynamic_level_bytes is true and leveled compaction
 // is used, the base level is not always L1, so precomupted max_file_size can
 // no longer be used. Recompute file_size_for_level from base level.
-uint64_t MaxFileSizeForLevel(const MutableCFOptions& cf_options,
-    int level, CompactionStyle compaction_style, int base_level,
-    bool level_compaction_dynamic_level_bytes) {
+uint64_t MaxFileSizeForLevel(const MutableCFOptions& cf_options, int level,
+                             CompactionStyle compaction_style, int base_level,
+                             bool level_compaction_dynamic_level_bytes) {
   if (!level_compaction_dynamic_level_bytes || level < base_level ||
       compaction_style != kCompactionStyleLevel) {
     assert(level >= 0);

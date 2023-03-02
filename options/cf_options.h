@@ -12,6 +12,7 @@
 #include "options/db_options.h"
 #include "rocksdb/options.h"
 #include "util/compression.h"
+#include "db/table_properties_collector.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -99,6 +100,9 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
 
   ImmutableOptions(const ImmutableDBOptions& db_options,
                    const ColumnFamilyOptions& cf_options);
+  void GetIntTblPropCollectorFactory(
+      const ImmutableCFOptions& ioptions,
+      IntTblPropCollectorFactories* int_tbl_prop_collector_factories);
 };
 
 struct MutableCFOptions {
@@ -314,9 +318,10 @@ struct MutableCFOptions {
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2);
 
 // Get the max file size in a given level.
-uint64_t MaxFileSizeForLevel(const MutableCFOptions& cf_options,
-    int level, CompactionStyle compaction_style, int base_level = 1,
-    bool level_compaction_dynamic_level_bytes = false);
+uint64_t MaxFileSizeForLevel(const MutableCFOptions& cf_options, int level,
+                             CompactionStyle compaction_style,
+                             int base_level = 1,
+                             bool level_compaction_dynamic_level_bytes = false);
 
 // Get the max size of an L0 file for which we will pin its meta-blocks when
 // `pin_l0_filter_and_index_blocks_in_cache` is set.

@@ -371,12 +371,21 @@ class DBImpl : public DB {
                                            const Range& range,
                                            uint64_t* const count,
                                            uint64_t* const size) override;
-  using DB::CompactRange;
+
   using DB::EstimateCompactRange;
   virtual Status EstimateCompactRange(
       const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
       const Slice* begin, const Slice* end,
       std::vector<std::pair<int, int>>* input_file_number) override;
+
+  using DB::CreateTableBuilder;
+  Status CreateTableBuilder(
+      uint32_t cf_id, ColumnFamilyHandle* cf, int level,
+      //                            TableBuilder** result,
+      const std::vector<std::pair<Slice, Slice>>& sst_content,
+      const std::string& file_name) override;
+
+  using DB::CompactRange;
   virtual Status CompactRange(
       const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
       const Slice* begin, const Slice* end,

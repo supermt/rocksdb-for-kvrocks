@@ -74,7 +74,13 @@ class StackableDB : public DB {
       ColumnFamilyHandle* column_family) override {
     return db_->DestroyColumnFamilyHandle(column_family);
   }
-
+  using DB::CreateTableBuilder;
+  Status CreateTableBuilder(uint32_t cf_id, ColumnFamilyHandle* cf, int level,
+                            //                            TableBuilder** result,
+                            const std::vector<std::pair<Slice, Slice>>& sst_content,
+                            const std::string& file_name) override {
+    return Status::NotSupported("not support");
+  }
   using DB::Put;
   virtual Status Put(const WriteOptions& options,
                      ColumnFamilyHandle* column_family, const Slice& key,

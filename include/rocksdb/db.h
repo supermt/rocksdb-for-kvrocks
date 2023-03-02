@@ -1273,6 +1273,13 @@ class DB {
       const CompactRangeOptions& options, ColumnFamilyHandle* column_family,
       const Slice* begin, const Slice* end,
       std::vector<std::pair<int, int>>* input_file_number) = 0;
+
+  virtual Status CreateTableBuilder(
+      uint32_t cf_id, ColumnFamilyHandle* cf, int level,
+      //                                    TableBuilder** result,
+      const std::vector<std::pair<Slice, Slice>>& sst_content,
+      const std::string& file_name) = 0;
+
   virtual Status CompactRange(const CompactRangeOptions& options,
                               ColumnFamilyHandle* column_family,
                               const Slice* begin, const Slice* end,

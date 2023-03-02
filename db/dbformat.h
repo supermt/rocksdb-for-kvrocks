@@ -22,10 +22,6 @@
 #include "util/user_comparator_wrapper.h"
 
 namespace ROCKSDB_NAMESPACE {
-class IntTblPropCollectorFactory;
-
-using IntTblPropCollectorFactories =
-    std::vector<std::unique_ptr<IntTblPropCollectorFactory>>;
 // The file declares data structures and functions that deal with internal
 // keys.
 // Each internal key contains a user key, a sequence number (SequenceNumber)

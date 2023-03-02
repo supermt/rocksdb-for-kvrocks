@@ -16,6 +16,10 @@
 
 namespace ROCKSDB_NAMESPACE {
 
+class IntTblPropCollectorFactory;
+
+using IntTblPropCollectorFactories =
+    std::vector<std::unique_ptr<IntTblPropCollectorFactory>>;
 // -- Table Properties
 // Other than basic table properties, each table may also have the user
 // collected properties.

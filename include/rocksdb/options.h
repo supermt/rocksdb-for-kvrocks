@@ -30,6 +30,7 @@
 #include "rocksdb/universal_compaction.h"
 #include "rocksdb/version.h"
 #include "rocksdb/write_buffer_manager.h"
+#include "rocksdb/table_properties.h"
 
 #ifdef max
 #undef max
@@ -64,7 +65,9 @@ struct ImmutableCFOptions;
 struct ImmutableDBOptions;
 struct MutableDBOptions;
 struct MutableCFOptions;
-
+//
+using IntTblPropCollectorFactories =
+    std::vector<std::unique_ptr<IntTblPropCollectorFactory>>;
 struct Options;
 struct DbPath;
 

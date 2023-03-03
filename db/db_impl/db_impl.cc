@@ -5758,8 +5758,11 @@ Status DBImpl::CreateTableBuilder(
   GetIntTblPropCollectorFactory(ImmutableCFOptions(options),
                                 &int_tbl_prop_collector_factories);
   std::unique_ptr<FSWritableFile> holder;
+  IODebugContext dbg;
+  env_->GetFileSystem()->NewWritableFile(file_name, FileOptions(options),
+                                         &holder, &dbg);
+  //  env_->NewSequentialFile(file_name, &holder, EnvOptions(options));
   //  auto IOs = env_->NewSequentialFile(file_name, &file, EnvOptions(options));
-
   std::unique_ptr<WritableFileWriter> file_writer(new WritableFileWriter(
       std::move(holder), file_name, FileOptions(options)));
 

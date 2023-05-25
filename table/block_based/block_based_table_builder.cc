@@ -1716,6 +1716,7 @@ void BlockBasedTableBuilder::WritePropertiesBlock(
           rep_->uncompressible_input_data_bytes;
     }
 
+
     // Add basic properties
     property_block_builder.AddTableProperty(rep_->props);
 
@@ -1998,6 +1999,7 @@ Status BlockBasedTableBuilder::Finish() {
   WriteIndexBlock(&meta_index_builder, &index_block_handle);
   WriteCompressionDictBlock(&meta_index_builder);
   WriteRangeDelBlock(&meta_index_builder);
+  // Add the version prop
   WritePropertiesBlock(&meta_index_builder);
   if (ok()) {
     // flush the meta index block

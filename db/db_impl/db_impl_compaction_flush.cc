@@ -914,13 +914,13 @@ Status DBImpl::EstimateCompactRange(
   const Comparator* const ucmp = column_family->GetComparator();
   assert(ucmp);
   size_t ts_sz = ucmp->timestamp_size();
-  Compaction* c=nullptr;
+  Compaction* c = nullptr;
   Status s;
   if (ts_sz == 0) {
     s = CompactRangeInternal(options, column_family, begin, end, "" /*trim_ts*/,
                              nullptr, true, &c);
-    assert(c!= nullptr);
-    if (c!=nullptr){
+    assert(c != nullptr);
+    if (c != nullptr) {
       for (auto& input : *c->inputs()) {
         input_file_number->emplace_back(input.level, input.files.size());
       }
@@ -948,14 +948,13 @@ Status DBImpl::EstimateCompactRange(
   Slice* end_with_ts = end ? &input_end : nullptr;
   s = CompactRangeInternal(options, column_family, begin, end, "" /*trim_ts*/,
                            nullptr, true, &c);
-  if (c!=nullptr){
+  if (c != nullptr) {
     for (auto& input : *c->inputs()) {
       input_file_number->emplace_back(input.level, input.files.size());
     }
     return Status::OK();
   }
   return Status::NotFound("No compaction has been picked");
-
 }
 Status DBImpl::CompactRange(const CompactRangeOptions& options,
                             ColumnFamilyHandle* column_family,
@@ -1583,10 +1582,12 @@ Status DBImpl::PauseBackgroundWork() {
     bg_cv_.Wait();
   }
   bg_work_paused_++;
+  env_->UnlockFile(db_lock_).PermitUncheckedError();
   return Status::OK();
 }
 
 Status DBImpl::ContinueBackgroundWork() {
+  env_->LockFile(db_lock_);
   InstrumentedMutexLock guard_lock(&mutex_);
   if (bg_work_paused_ == 0) {
     return Status::InvalidArgument();
@@ -1867,7 +1868,8 @@ Status DBImpl::RunManualCompaction(
     const CompactRangeOptions& compact_range_options, const Slice* begin,
     const Slice* end, bool exclusive, bool disallow_trivial_move,
     uint64_t max_file_num_to_ignore, const std::string& trim_ts,
-    std::vector<std::string>* result_names, bool schedule_only, Compaction** c) {
+    std::vector<std::string>* result_names, bool schedule_only,
+    Compaction** c) {
   assert(input_level == ColumnFamilyData::kCompactAllLevels ||
          input_level >= 0);
 

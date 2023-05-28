@@ -1582,12 +1582,10 @@ Status DBImpl::PauseBackgroundWork() {
     bg_cv_.Wait();
   }
   bg_work_paused_++;
-  env_->UnlockFile(db_lock_).PermitUncheckedError();
   return Status::OK();
 }
 
 Status DBImpl::ContinueBackgroundWork() {
-  env_->LockFile(db_lock_);
   InstrumentedMutexLock guard_lock(&mutex_);
   if (bg_work_paused_ == 0) {
     return Status::InvalidArgument();

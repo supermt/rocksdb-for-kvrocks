@@ -26,11 +26,11 @@
 #include "rocksdb/file_checksum.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/sst_partitioner.h"
+#include "rocksdb/table_properties.h"
 #include "rocksdb/types.h"
 #include "rocksdb/universal_compaction.h"
 #include "rocksdb/version.h"
 #include "rocksdb/write_buffer_manager.h"
-#include "rocksdb/table_properties.h"
 
 #ifdef max
 #undef max
@@ -2002,6 +2002,12 @@ struct IngestExternalFileOptions {
   //
   // ingest_behind takes precedence over fail_if_not_bottommost_level.
   bool fail_if_not_bottommost_level = false;
+
+  // if this method is triggered, all files will be set into subtiers
+  // this will skip most of the unnecessary part
+  bool sub_tier_mode = false;
+  // For each round of ingestion, we move only one level into target instance.
+  int sub_tier_base = -1;
 };
 
 enum TraceFilterType : uint64_t {

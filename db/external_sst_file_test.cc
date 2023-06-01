@@ -291,9 +291,64 @@ class ExternalSSTFileTest
     return db_->IngestExternalFile(files, opts);
   }
 
+  Status FastAddFile(const std::vector<std::string>& files, int target_level,
+                     bool move_files = false, bool skip_snapshot_check = false,
+                     bool skip_write_global_seqno = false) {
+    IngestExternalFileOptions opts;
+    opts.move_files = false;
+    opts.sub_tier_mode = true;
+    opts.sub_tier_base = target_level;
+    return db_->IngestExternalFile(files, opts);
+  }
+
  protected:
   int last_file_id_ = 0;
 };
+
+TEST_F(ExternalSSTFileTest, FastIngest) {
+  Options options = CurrentOptions();
+
+  SstFileWriter sst_file_writer(EnvOptions(), options);
+
+  // Current file size should be 0 after sst_file_writer init and before open
+  // a file.
+  ASSERT_EQ(sst_file_writer.FileSize(), 0);
+
+  std::string origin_sst = "/home/supermt/000061.sst";
+
+  DestroyAndReopen(options);
+
+  auto s = FastAddFile({origin_sst}, 1);
+  ASSERT_OK(s);
+  auto versions = static_cast<DBImpl*>(db_)->GetVersionSet();
+  for (auto cfd : *versions->GetColumnFamilySet()) {
+    for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
+      int sub_tier_num = cfd->current()->storage_info()->NumLevelSubTier(i);
+
+      std::cout << "Level: " << i << " # of Sub tier: " << sub_tier_num
+                << std::endl;
+    }
+  }
+  std::cout << "After fast ingestion in level 2" << std::endl;
+  s = FastAddFile({origin_sst}, 2);
+  s = FastAddFile({origin_sst}, 4);
+  ASSERT_OK(s);
+  // Add file using file path
+  //    ASSERT_OK(DeprecatedAddFile({"/home/supermt/000074.sst"}));
+  //    ASSERT_OK(DeprecatedAddFile({"/home/supermt/000075.sst"}));
+  versions = static_cast<DBImpl*>(db_)->GetVersionSet();
+  for (auto cfd : *versions->GetColumnFamilySet()) {
+    for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
+      int sub_tier_num = cfd->current()->storage_info()->NumLevelSubTier(i);
+
+      std::cout << "Level: " << i << " # of Sub tier: " << sub_tier_num
+                << std::endl;
+    }
+  }
+  ASSERT_OK(s);
+
+  DestroyAndRecreateExternalSSTFilesDir();
+}
 
 TEST_F(ExternalSSTFileTest, Basic) {
   do {
@@ -317,13 +372,13 @@ TEST_F(ExternalSSTFileTest, Basic) {
     // Current file size should be non-zero after success write.
     ASSERT_GT(sst_file_writer.FileSize(), 0);
 
-//    ASSERT_EQ(file1_info.file_path, file1);
-//    ASSERT_EQ(file1_info.num_entries, 100);
-//    ASSERT_EQ(file1_info.smallest_key, Key(0));
-//    ASSERT_EQ(file1_info.largest_key, Key(99));
-//    ASSERT_EQ(file1_info.num_range_del_entries, 0);
-//    ASSERT_EQ(file1_info.smallest_range_del_key, "");
-//    ASSERT_EQ(file1_info.largest_range_del_key, "");
+    //    ASSERT_EQ(file1_info.file_path, file1);
+    //    ASSERT_EQ(file1_info.num_entries, 100);
+    //    ASSERT_EQ(file1_info.smallest_key, Key(0));
+    //    ASSERT_EQ(file1_info.largest_key, Key(99));
+    //    ASSERT_EQ(file1_info.num_range_del_entries, 0);
+    //    ASSERT_EQ(file1_info.smallest_range_del_key, "");
+    //    ASSERT_EQ(file1_info.largest_range_del_key, "");
     // sst_file_writer already finished, cannot add this value
     ASSERT_NOK(sst_file_writer.Put(Key(100), "bad_val"));
 

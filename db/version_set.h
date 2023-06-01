@@ -133,9 +133,13 @@ class VersionStorageInfo {
   ~VersionStorageInfo();
 
   void Reserve(int level, size_t size) { files_[level].reserve(size); }
+  void Reserve(int level, int sub_tier, size_t size) {
+    sub_tiers_[level][sub_tier].reserve(size);
+  }
 
   void AddFile(int level, FileMetaData* f);
 
+  void AddFileToSubTier(int level, int sub_tier, FileMetaData* f);
   // Resize/Initialize the space for compact_cursor_
   void ResizeCompactCursors(int level) {
     compact_cursor_.resize(level, InternalKey());
@@ -230,9 +234,7 @@ class VersionStorageInfo {
       double blob_garbage_collection_age_cutoff,
       double blob_garbage_collection_force_threshold);
 
-  bool level0_non_overlapping() const {
-    return level0_non_overlapping_;
-  }
+  bool level0_non_overlapping() const { return level0_non_overlapping_; }
 
   // Updates the oldest snapshot and related internal state, like the bottommost
   // files marked for compaction.
@@ -320,7 +322,13 @@ class VersionStorageInfo {
   const std::vector<FileMetaData*>& LevelFiles(int level) const {
     return files_[level];
   }
+  const std::vector<FileMetaData*>& SubTierFiles(int level,
+                                                 int sub_tier) const {
+    return sub_tiers_[level][sub_tier];
+  }
 
+  uint64_t NumLevelSubTier(int level) const { return sub_tiers_[level].size(); }
+  int CreateSubTier(int level);
   class FileLocation {
    public:
     FileLocation() = default;
@@ -616,6 +624,8 @@ class VersionStorageInfo {
   // List of files per level, files in each level are arranged
   // in increasing order of keys
   std::vector<FileMetaData*>* files_;
+  using SubTier = std::vector<FileMetaData*>;
+  std::vector<SubTier>* sub_tiers_;
 
   // Map of all table files in version. Maps file number to (level, position on
   // level).
@@ -814,8 +824,8 @@ class Version {
 
   Status OverlapWithLevelIterator(const ReadOptions&, const FileOptions&,
                                   const Slice& smallest_user_key,
-                                  const Slice& largest_user_key,
-                                  int level, bool* overlap);
+                                  const Slice& largest_user_key, int level,
+                                  bool* overlap);
 
   // Lookup the value for key or get all merge operands for key.
   // If do_merge = true (default) then lookup value for key.
@@ -1032,10 +1042,10 @@ class Version {
   const MergeOperator* merge_operator_;
 
   VersionStorageInfo storage_info_;
-  VersionSet* vset_;            // VersionSet to which this Version belongs
-  Version* next_;               // Next version in linked list
-  Version* prev_;               // Previous version in linked list
-  int refs_;                    // Number of live refs to this version
+  VersionSet* vset_;  // VersionSet to which this Version belongs
+  Version* next_;     // Next version in linked list
+  Version* prev_;     // Previous version in linked list
+  int refs_;          // Number of live refs to this version
   const FileOptions file_options_;
   const MutableCFOptions mutable_cf_options_;
   // Cached value to avoid recomputing it on every read.
@@ -1397,7 +1407,7 @@ class VersionSet {
                             FileMetaData** metadata, ColumnFamilyData** cfd);
 
   // This function doesn't support leveldb SST filenames
-  void GetLiveFilesMetaData(std::vector<LiveFileMetaData> *metadata);
+  void GetLiveFilesMetaData(std::vector<LiveFileMetaData>* metadata);
 
   void AddObsoleteBlobFile(uint64_t blob_file_number, std::string path) {
     assert(table_cache_);

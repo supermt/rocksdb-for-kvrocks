@@ -239,6 +239,7 @@ class VersionBuilder::Rep {
   VersionSet* version_set_;
   int num_levels_;
   LevelState* levels_;
+  LevelState** sub_tiers_;
   // Store sizes of levels larger than num_levels_. We do this instead of
   // storing them in levels_ to avoid regression in case there are no files
   // on invalid levels. The version is not consistent if in the end the files
@@ -249,6 +250,7 @@ class VersionBuilder::Rep {
   bool has_invalid_levels_;
   // Current levels of table files affected by additions/deletions.
   std::unordered_map<uint64_t, int> table_file_levels_;
+  std::unordered_map<uint64_t, int> table_file_tiers_;
   // Current compact cursors that should be changed after the last compaction
   std::unordered_map<int, InternalKey> updated_compact_cursors_;
   NewestFirstBySeqNo level_zero_cmp_;
@@ -277,6 +279,12 @@ class VersionBuilder::Rep {
     assert(ioptions_);
 
     levels_ = new LevelState[num_levels_];
+    sub_tiers_ = new LevelState*[num_levels_];
+    for (int i = 0; i < base_vstorage->num_levels(); i++) {
+      int sub_tiers = base_vstorage->NumLevelSubTier(i);
+      sub_tiers_[i] = new LevelState[sub_tiers + 1];
+      // leave at least one empty sub-tier for further insert
+    }
   }
 
   ~Rep() {
@@ -654,6 +662,16 @@ class VersionBuilder::Rep {
     return base_vstorage_->GetFileLocation(file_number).GetLevel();
   }
 
+  int GetCurrentTierForTableFile(uint64_t file_number) const {
+    auto it = table_file_levels_.find(file_number);
+    if (it != table_file_levels_.end()) {
+      return it->second;
+    }
+
+    assert(base_vstorage_);
+    return base_vstorage_->GetFileLocation(file_number).GetLevel();
+  }
+
   uint64_t GetOldestBlobFileNumberForTableFile(int level,
                                                uint64_t file_number) const {
     assert(level < num_levels_);
@@ -811,6 +829,56 @@ class VersionBuilder::Rep {
     return Status::OK();
   }
 
+  Status ApplySubTierFileAddition(int level, int sub_tier,
+                                  const FileMetaData& meta) {
+    assert(level != VersionStorageInfo::FileLocation::Invalid().GetLevel());
+
+    const uint64_t file_number = meta.fd.GetNumber();
+
+    // the newly added sub-tier files can neven exist in current file.
+
+    if (level >= num_levels_) {
+      ++invalid_level_sizes_[level];
+      table_file_levels_[file_number] = level;
+      // this is not update, it will directly insert, should it really be okay??
+
+      return Status::OK();
+    }
+
+    auto& tier_state = sub_tiers_[level][sub_tier];
+    // deleting files
+    auto& del_files = tier_state.deleted_files;
+    auto del_it = del_files.find(file_number);
+    if (del_it != del_files.end()) {
+      del_files.erase(del_it);
+    }  // erase if the sub-tier file is not in the tier list.
+
+    FileMetaData* const f = new FileMetaData(meta);
+    f->refs = 1;
+
+    // don't add cache for the sub tier files
+
+    // adding all files
+    auto& add_files = tier_state.added_files;
+    assert(add_files.find(file_number) == add_files.end());
+    add_files.emplace(file_number, f);
+
+    const uint64_t blob_file_number = f->oldest_blob_file_number;
+
+    if (blob_file_number != kInvalidBlobFileNumber) {
+      MutableBlobFileMetaData* const mutable_meta =
+          GetOrCreateMutableBlobFileMetaData(blob_file_number);
+      if (mutable_meta) {
+        mutable_meta->LinkSst(file_number);
+      }
+    }
+
+    table_file_levels_[file_number] = level;
+    table_file_tiers_[file_number] = sub_tier;
+
+    return Status::OK();
+  }
+
   Status ApplyCompactCursors(int level,
                              const InternalKey& smallest_uncompacted_key) {
     if (level < 0) {
@@ -873,6 +941,18 @@ class VersionBuilder::Rep {
       const FileMetaData& meta = new_file.second;
 
       const Status s = ApplyFileAddition(level, meta);
+      if (!s.ok()) {
+        return s;
+      }
+    }
+
+    // Fast ingestion: add new sub tier files
+    for (const auto& new_file : edit->GetNewSubTierFiles()) {
+      const int level = new_file.first;
+      const int sub_tier = (new_file.first - level) * 10;
+      const FileMetaData& meta = new_file.second;
+
+      const Status s = ApplySubTierFileAddition(level, sub_tier, meta);
       if (!s.ok()) {
         return s;
       }
@@ -1100,6 +1180,32 @@ class VersionBuilder::Rep {
                        process_mutable, process_both);
   }
 
+  void MaybeAddSubTier(VersionStorageInfo* vstorage, int level, int sub_tier,
+                       FileMetaData* f) const {
+    const uint64_t file_number = f->fd.GetNumber();
+
+    const auto& level_state = levels_[level];
+
+    const auto& del_files = level_state.deleted_files;
+    const auto del_it = del_files.find(file_number);
+
+    if (del_it != del_files.end()) {
+      // f is to-be-deleted table file
+      vstorage->RemoveCurrentStats(f);
+    } else {
+      const auto& add_files = level_state.added_files;
+      const auto add_it = add_files.find(file_number);
+
+      // Note: if the file appears both in the base version and in the added
+      // list, the added FileMetaData supersedes the one in the base version.
+      if (add_it != add_files.end() && add_it->second != f) {
+        vstorage->RemoveCurrentStats(f);
+      } else {
+        vstorage->AddFileToSubTier(level, sub_tier, f);
+      }
+    }
+  }
+
   void MaybeAddFile(VersionStorageInfo* vstorage, int level,
                     FileMetaData* f) const {
     const uint64_t file_number = f->fd.GetNumber();
@@ -1156,6 +1262,80 @@ class VersionBuilder::Rep {
     }
   }
 
+  void SaveSubTierTo(VersionStorageInfo* vstorage) const {
+    assert(vstorage);
+
+    if (!num_levels_) {
+      return;
+    }
+    // save all existing sub tier files
+
+    for (int level = 0; level < num_levels_; level++) {
+      int sub_tier_files = base_vstorage_->NumLevelSubTier(level);
+      if (sub_tier_files > 0) {
+        // there are existing sub tiers
+        for (int i = 0; i < sub_tier_files; i++) {
+          vstorage->CreateSubTier(level);
+          if (level == 0) {
+            CopySubTierTo(vstorage, level, i);
+          } else {
+            CopySubTierTo(vstorage, level, i);
+          }
+        }
+      }
+    }
+
+    for (int level = 0; level < num_levels_; level++) {
+      if (sub_tiers_[level]->added_files.size() > 0) {
+        //        base_vstorage_->CreateSubTier(level);
+        vstorage->CreateSubTier(level);
+        if (level == 0) {
+          SaveSubTierTo(vstorage, level, base_vstorage_->NumLevelSubTier(level),
+                        level_zero_cmp_);
+        } else {
+          SaveSubTierTo(vstorage, level, base_vstorage_->NumLevelSubTier(level),
+                        level_nonzero_cmp_);
+        }
+      }
+    }
+  }
+
+  void CopySubTierTo(VersionStorageInfo* vstorage, int level,
+                     int sub_tier) const {
+    // For Sub-tier, we don't merge, only insert into new levels;
+    const auto& added_files = base_vstorage_->SubTierFiles(level, sub_tier);
+    vstorage->Reserve(level, sub_tier, added_files.size());
+
+    for (auto added_file : added_files) {
+      MaybeAddSubTier(vstorage, level, sub_tier, added_file);
+    }
+  }
+
+  template <typename Cmp>
+  void SaveSubTierTo(VersionStorageInfo* vstorage, int level, int sub_tier,
+                     Cmp cmp) const {
+    // For Sub-tier, we don't merge, only insert into new levels;
+    const auto& unordered_added_files = sub_tiers_[level][sub_tier].added_files;
+    vstorage->Reserve(level, unordered_added_files.size());
+
+    // Sort added files for the level.
+    std::vector<FileMetaData*> added_files;
+    added_files.reserve(unordered_added_files.size());
+    for (const auto& pair : unordered_added_files) {
+      added_files.push_back(pair.second);
+    }
+    std::sort(added_files.begin(), added_files.end(), cmp);
+
+    for (auto added_file : added_files) {
+      MaybeAddSubTier(vstorage, level, sub_tier, added_file);
+    }
+    //    auto added_iter = added_files.begin();
+    //    auto added_end = added_files.end();
+    //    while (added_iter != added_end) {
+    //      MaybeAddSubTier(vstorage, level, sub_tier, *added_iter++);
+    //    }
+  }
+
   void SaveSSTFilesTo(VersionStorageInfo* vstorage) const {
     assert(vstorage);
 
@@ -1195,6 +1375,7 @@ class VersionBuilder::Rep {
     }
 
     SaveSSTFilesTo(vstorage);
+    SaveSubTierTo(vstorage);
 
     SaveBlobFilesTo(vstorage);
 

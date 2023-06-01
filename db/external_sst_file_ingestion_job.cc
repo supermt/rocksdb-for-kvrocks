@@ -65,30 +65,39 @@ Status ExternalSstFileIngestionJob::Prepare(
     files_to_ingest_.emplace_back(std::move(file_to_ingest));
   }
 
-  const Comparator* ucmp = cfd_->internal_comparator().user_comparator();
+  // Skip overlapping checking if in sub tier model
   auto num_files = files_to_ingest_.size();
-  if (num_files == 0) {
-    return Status::InvalidArgument("The list of files is empty");
-  } else if (num_files > 1) {
-    // Verify that passed files don't have overlapping ranges
-    autovector<const IngestedFileInfo*> sorted_files;
-    for (size_t i = 0; i < num_files; i++) {
-      sorted_files.push_back(&files_to_ingest_[i]);
+
+  if (!ingestion_options_.sub_tier_mode) {
+    const Comparator* ucmp = cfd_->internal_comparator().user_comparator();
+    if (num_files == 0) {
+      return Status::InvalidArgument("The list of files is empty");
+    } else if (num_files > 1) {
+      // Verify that passed files don't have overlapping ranges
+      autovector<const IngestedFileInfo*> sorted_files;
+      for (size_t i = 0; i < num_files; i++) {
+        sorted_files.push_back(&files_to_ingest_[i]);
+      }
+
+      std::sort(sorted_files.begin(), sorted_files.end(),
+                [&ucmp](const IngestedFileInfo* info1,
+                        const IngestedFileInfo* info2) {
+                  return sstableKeyCompare(ucmp, info1->smallest_internal_key,
+                                           info2->smallest_internal_key) < 0;
+                });
+
+      for (size_t i = 0; i + 1 < num_files; i++) {
+        if (sstableKeyCompare(ucmp, sorted_files[i]->largest_internal_key,
+                              sorted_files[i + 1]->smallest_internal_key) >=
+            0) {
+          files_overlap_ = true;
+          break;
+        }
+      }
     }
 
-    std::sort(
-        sorted_files.begin(), sorted_files.end(),
-        [&ucmp](const IngestedFileInfo* info1, const IngestedFileInfo* info2) {
-          return sstableKeyCompare(ucmp, info1->smallest_internal_key,
-                                   info2->smallest_internal_key) < 0;
-        });
-
-    for (size_t i = 0; i + 1 < num_files; i++) {
-      if (sstableKeyCompare(ucmp, sorted_files[i]->largest_internal_key,
-                            sorted_files[i + 1]->smallest_internal_key) >= 0) {
-        files_overlap_ = true;
-        break;
-      }
+    if (ingestion_options_.ingest_behind && files_overlap_) {
+      return Status::NotSupported("Files have overlapping ranges");
     }
   }
 
@@ -97,18 +106,13 @@ Status ExternalSstFileIngestionJob::Prepare(
     files_to_ingest_[i].file_temperature = file_temperature;
   }
 
-  if (ingestion_options_.ingest_behind && files_overlap_) {
-    return Status::NotSupported("Files have overlapping ranges");
-  }
-
   // Copy/Move external files into DB
   std::unordered_set<size_t> ingestion_path_ids;
   for (IngestedFileInfo& f : files_to_ingest_) {
     f.copy_file = false;
     const std::string path_outside_db = f.external_file_path;
-    const std::string path_inside_db =
-        TableFileName(cfd_->ioptions()->cf_paths, f.fd.GetNumber(),
-                      f.fd.GetPathId());
+    const std::string path_inside_db = TableFileName(
+        cfd_->ioptions()->cf_paths, f.fd.GetNumber(), f.fd.GetPathId());
     if (ingestion_options_.move_files) {
       status =
           fs_->LinkFile(path_outside_db, path_inside_db, IOOptions(), nullptr);
@@ -338,6 +342,10 @@ Status ExternalSstFileIngestionJob::Prepare(
 
 Status ExternalSstFileIngestionJob::NeedsFlush(bool* flush_needed,
                                                SuperVersion* super_version) {
+  if (ingestion_options_.sub_tier_mode) {
+    *flush_needed = false;
+    return Status::OK();
+  }
   autovector<Range> ranges;
   for (const IngestedFileInfo& file_to_ingest : files_to_ingest_) {
     ranges.emplace_back(file_to_ingest.smallest_internal_key.user_key(),
@@ -386,54 +394,63 @@ Status ExternalSstFileIngestionJob::Run() {
 
   for (IngestedFileInfo& f : files_to_ingest_) {
     SequenceNumber assigned_seqno = 0;
-    if (ingestion_options_.ingest_behind) {
-      status = CheckLevelForIngestedBehindFile(&f);
+    if (ingestion_options_.sub_tier_mode) {
+      if (ingestion_options_.sub_tier_base == -1) {
+        f.picked_level = super_version->current->storage_info()->MaxOutputLevel(
+            ingestion_options_.ingest_behind);
+      }
+      f.picked_level = ingestion_options_.sub_tier_base;
     } else {
-      status = AssignLevelAndSeqnoForIngestedFile(
-          super_version, force_global_seqno, cfd_->ioptions()->compaction_style,
-          last_seqno, &f, &assigned_seqno);
-    }
+      if (ingestion_options_.ingest_behind) {
+        status = CheckLevelForIngestedBehindFile(&f);
+      } else {
+        status = AssignLevelAndSeqnoForIngestedFile(
+            super_version, force_global_seqno,
+            cfd_->ioptions()->compaction_style, last_seqno, &f,
+            &assigned_seqno);
+      }
 
-    // Modify the smallest/largest internal key to include the sequence number
-    // that we just learned. Only overwrite sequence number zero. There could
-    // be a nonzero sequence number already to indicate a range tombstone's
-    // exclusive endpoint.
-    ParsedInternalKey smallest_parsed, largest_parsed;
-    if (status.ok()) {
-      status = ParseInternalKey(*f.smallest_internal_key.rep(),
-                                &smallest_parsed, false /* log_err_key */);
-    }
-    if (status.ok()) {
-      status = ParseInternalKey(*f.largest_internal_key.rep(), &largest_parsed,
-                                false /* log_err_key */);
-    }
-    if (!status.ok()) {
-      return status;
-    }
-    if (smallest_parsed.sequence == 0) {
-      UpdateInternalKey(f.smallest_internal_key.rep(), assigned_seqno,
-                        smallest_parsed.type);
-    }
-    if (largest_parsed.sequence == 0) {
-      UpdateInternalKey(f.largest_internal_key.rep(), assigned_seqno,
-                        largest_parsed.type);
-    }
+      // Modify the smallest/largest internal key to include the sequence number
+      // that we just learned. Only overwrite sequence number zero. There could
+      // be a nonzero sequence number already to indicate a range tombstone's
+      // exclusive endpoint.
+      ParsedInternalKey smallest_parsed, largest_parsed;
+      if (status.ok()) {
+        status = ParseInternalKey(*f.smallest_internal_key.rep(),
+                                  &smallest_parsed, false /* log_err_key */);
+      }
+      if (status.ok()) {
+        status = ParseInternalKey(*f.largest_internal_key.rep(),
+                                  &largest_parsed, false /* log_err_key */);
+      }
+      if (!status.ok()) {
+        return status;
+      }
+      if (smallest_parsed.sequence == 0) {
+        UpdateInternalKey(f.smallest_internal_key.rep(), assigned_seqno,
+                          smallest_parsed.type);
+      }
+      if (largest_parsed.sequence == 0) {
+        UpdateInternalKey(f.largest_internal_key.rep(), assigned_seqno,
+                          largest_parsed.type);
+      }
 
-    status = AssignGlobalSeqnoForIngestedFile(&f, assigned_seqno);
-    TEST_SYNC_POINT_CALLBACK("ExternalSstFileIngestionJob::Run",
-                             &assigned_seqno);
-    if (assigned_seqno > last_seqno) {
-      assert(assigned_seqno == last_seqno + 1);
-      last_seqno = assigned_seqno;
-      ++consumed_seqno_count_;
-    }
-    if (!status.ok()) {
-      return status;
-    }
+      status = AssignGlobalSeqnoForIngestedFile(&f, assigned_seqno);
+      TEST_SYNC_POINT_CALLBACK("ExternalSstFileIngestionJob::Run",
+                               &assigned_seqno);
+      if (assigned_seqno > last_seqno) {
+        assert(assigned_seqno == last_seqno + 1);
+        last_seqno = assigned_seqno;
+        ++consumed_seqno_count_;
+      }
+      if (!status.ok()) {
+        return status;
+      }
 
-    status = GenerateChecksumForIngestedFile(&f);
-    if (!status.ok()) {
-      return status;
+      status = GenerateChecksumForIngestedFile(&f);
+      if (!status.ok()) {
+        return status;
+      }
     }
 
     // We use the import time as the ancester time. This is the time the data
@@ -452,7 +469,15 @@ Status ExternalSstFileIngestionJob::Run() {
         oldest_ancester_time, current_time, f.file_checksum,
         f.file_checksum_func_name, f.unique_id);
     f_metadata.temperature = f.file_temperature;
-    edit_.AddFile(f.picked_level, f_metadata);
+    if (ingestion_options_.sub_tier_mode) {
+      auto current_subtier_no =
+          super_version->current->storage_info()->NumLevelSubTier(
+              f.picked_level);
+      edit_.AddFileToSublevel(f.picked_level, f_metadata,
+                              (int)current_subtier_no);
+    } else {
+      edit_.AddFile(f.picked_level, f_metadata);
+    }
   }
   return status;
 }
@@ -470,7 +495,8 @@ void ExternalSstFileIngestionJob::UpdateStats() {
   stream.StartArray();
 
   for (IngestedFileInfo& f : files_to_ingest_) {
-    InternalStats::CompactionStats stats(CompactionReason::kExternalSstIngestion, 1);
+    InternalStats::CompactionStats stats(
+        CompactionReason::kExternalSstIngestion, 1);
     stats.micros = total_time;
     // If actual copy occurred for this file, then we need to count the file
     // size as the actual bytes written. If the file was linked, then we ignore
@@ -570,8 +596,8 @@ Status ExternalSstFileIngestionJob::GetIngestedFileInfo(
   std::unique_ptr<FSRandomAccessFile> sst_file;
   std::unique_ptr<RandomAccessFileReader> sst_file_reader;
 
-  status = fs_->NewRandomAccessFile(external_file, env_options_,
-                                    &sst_file, nullptr);
+  status =
+      fs_->NewRandomAccessFile(external_file, env_options_, &sst_file, nullptr);
   if (!status.ok()) {
     return status;
   }
@@ -609,41 +635,46 @@ Status ExternalSstFileIngestionJob::GetIngestedFileInfo(
   auto props = table_reader->GetTableProperties();
   const auto& uprops = props->user_collected_properties;
 
-  // Get table version
-  auto version_iter = uprops.find(ExternalSstFilePropertyNames::kVersion);
-  if (version_iter == uprops.end()) {
-    return Status::Corruption("External file version not found");
-  }
-  file_to_ingest->version = DecodeFixed32(version_iter->second.c_str());
-
-  auto seqno_iter = uprops.find(ExternalSstFilePropertyNames::kGlobalSeqno);
-  if (file_to_ingest->version == 2) {
-    // version 2 imply that we have global sequence number
-    if (seqno_iter == uprops.end()) {
-      return Status::Corruption(
-          "External file global sequence number not found");
+  if (!ingestion_options_.sub_tier_mode) {
+    // Get table version
+    auto version_iter = uprops.find(ExternalSstFilePropertyNames::kVersion);
+    if (version_iter == uprops.end()) {
+      return Status::Corruption("External file version not found");
     }
+    file_to_ingest->version = DecodeFixed32(version_iter->second.c_str());
 
-    // Set the global sequence number
-    file_to_ingest->original_seqno = DecodeFixed64(seqno_iter->second.c_str());
-    if (props->external_sst_file_global_seqno_offset == 0) {
-      file_to_ingest->global_seqno_offset = 0;
-      return Status::Corruption("Was not able to find file global seqno field");
-    }
-    file_to_ingest->global_seqno_offset =
-        static_cast<size_t>(props->external_sst_file_global_seqno_offset);
-  } else if (file_to_ingest->version == 1) {
-    // SST file V1 should not have global seqno field
-    assert(seqno_iter == uprops.end());
-    file_to_ingest->original_seqno = 0;
-    if (ingestion_options_.allow_blocking_flush ||
-            ingestion_options_.allow_global_seqno) {
-      return Status::InvalidArgument(
+    auto seqno_iter = uprops.find(ExternalSstFilePropertyNames::kGlobalSeqno);
+    if (file_to_ingest->version == 2) {
+      // version 2 imply that we have global sequence number
+      if (seqno_iter == uprops.end()) {
+        return Status::Corruption(
+            "External file global sequence number not found");
+      }
+
+      // Set the global sequence number
+      file_to_ingest->original_seqno =
+          DecodeFixed64(seqno_iter->second.c_str());
+      if (props->external_sst_file_global_seqno_offset == 0) {
+        file_to_ingest->global_seqno_offset = 0;
+        return Status::Corruption(
+            "Was not able to find file global seqno field");
+      }
+      file_to_ingest->global_seqno_offset =
+          static_cast<size_t>(props->external_sst_file_global_seqno_offset);
+    } else if (file_to_ingest->version == 1) {
+      // SST file V1 should not have global seqno field
+      assert(seqno_iter == uprops.end());
+      file_to_ingest->original_seqno = 0;
+      if (ingestion_options_.allow_blocking_flush ||
+          ingestion_options_.allow_global_seqno) {
+        return Status::InvalidArgument(
             "External SST file V1 does not support global seqno");
+      }
+    } else {
+      return Status::InvalidArgument("External file version is not supported");
     }
-  } else {
-    return Status::InvalidArgument("External file version is not supported");
   }
+
   // Get number of entries in table
   file_to_ingest->num_entries = props->num_entries;
   file_to_ingest->num_range_deletions = props->num_range_deletions;
@@ -677,7 +708,7 @@ Status ExternalSstFileIngestionJob::GetIngestedFileInfo(
       return Status::Corruption("Corrupted key in external file. ",
                                 pik_status.getState());
     }
-    if (key.sequence != 0) {
+    if (!ingestion_options_.sub_tier_mode && key.sequence != 0) {
       return Status::Corruption("External file has non zero sequence number");
     }
     file_to_ingest->smallest_internal_key.SetFrom(key);
@@ -688,7 +719,7 @@ Status ExternalSstFileIngestionJob::GetIngestedFileInfo(
       return Status::Corruption("Corrupted key in external file. ",
                                 pik_status.getState());
     }
-    if (key.sequence != 0) {
+    if (!ingestion_options_.sub_tier_mode && key.sequence != 0) {
       return Status::Corruption("External file has non zero sequence number");
     }
     file_to_ingest->largest_internal_key.SetFrom(key);
@@ -836,7 +867,7 @@ Status ExternalSstFileIngestionJob::AssignLevelAndSeqnoForIngestedFile(
     return status;
   }
 
- TEST_SYNC_POINT_CALLBACK(
+  TEST_SYNC_POINT_CALLBACK(
       "ExternalSstFileIngestionJob::AssignLevelAndSeqnoForIngestedFile",
       &overlap_with_db);
   file_to_ingest->picked_level = target_level;
@@ -851,10 +882,10 @@ Status ExternalSstFileIngestionJob::CheckLevelForIngestedBehindFile(
   auto* vstorage = cfd_->current()->storage_info();
   // first check if new files fit in the bottommost level
   int bottom_lvl = cfd_->NumberLevels() - 1;
-  if(!IngestedFileFitInLevel(file_to_ingest, bottom_lvl)) {
+  if (!IngestedFileFitInLevel(file_to_ingest, bottom_lvl)) {
     return Status::InvalidArgument(
-      "Can't ingest_behind file as it doesn't fit "
-      "at the bottommost level!");
+        "Can't ingest_behind file as it doesn't fit "
+        "at the bottommost level!");
   }
 
   // second check if despite allow_ingest_behind=true we still have 0 seqnums
@@ -863,8 +894,8 @@ Status ExternalSstFileIngestionJob::CheckLevelForIngestedBehindFile(
     for (auto file : vstorage->LevelFiles(lvl)) {
       if (file->fd.smallest_seqno == 0) {
         return Status::InvalidArgument(
-          "Can't ingest_behind file as despite allow_ingest_behind=true "
-          "there are files with 0 seqno in database at upper levels!");
+            "Can't ingest_behind file as despite allow_ingest_behind=true "
+            "there are files with 0 seqno in database at upper levels!");
       }
     }
   }
@@ -891,9 +922,8 @@ Status ExternalSstFileIngestionJob::AssignGlobalSeqnoForIngestedFile(
     // If the file system does not support random write, then we should not.
     // Otherwise we should.
     std::unique_ptr<FSRandomRWFile> rwfile;
-    Status status =
-        fs_->NewRandomRWFile(file_to_ingest->internal_file_path, env_options_,
-                             &rwfile, nullptr);
+    Status status = fs_->NewRandomRWFile(file_to_ingest->internal_file_path,
+                                         env_options_, &rwfile, nullptr);
     TEST_SYNC_POINT_CALLBACK("ExternalSstFileIngestionJob::NewRandomRWFile",
                              &status);
     if (status.ok()) {

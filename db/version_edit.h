@@ -331,9 +331,11 @@ struct FdWithKeyRange {
 struct LevelFilesBrief {
   size_t num_files;
   FdWithKeyRange* files;
+  double level_no;
   LevelFilesBrief() {
     num_files = 0;
     files = nullptr;
+    level_no = 0.0;
   }
 };
 
@@ -444,9 +446,22 @@ class VersionEdit {
     }
   }
 
+  void AddFileToSublevel(int level, const FileMetaData& f, int sub_level) {
+    assert(f.fd.smallest_seqno <= f.fd.largest_seqno);
+    double sub_level_float = (double)level + (double)sub_level / 10.0;
+    new_subtier_files_.emplace_back(sub_level_float, f);
+    if (!HasLastSequence() || f.fd.largest_seqno > GetLastSequence()) {
+      SetLastSequence(f.fd.largest_seqno);
+    }
+  }
+
   // Retrieve the table files added as well as their associated levels.
   using NewFiles = std::vector<std::pair<int, FileMetaData>>;
+  using NewSubTierFiles = std::vector<std::pair<double, FileMetaData>>;
   const NewFiles& GetNewFiles() const { return new_files_; }
+  const NewSubTierFiles& GetNewSubTierFiles() const {
+    return new_subtier_files_;
+  }
 
   // Retrieve all the compact cursors
   using CompactCursors = std::vector<std::pair<int, InternalKey>>;
@@ -643,6 +658,7 @@ class VersionEdit {
 
   DeletedFiles deleted_files_;
   NewFiles new_files_;
+  NewSubTierFiles new_subtier_files_;
 
   BlobFileAdditions blob_file_additions_;
   BlobFileGarbages blob_file_garbages_;

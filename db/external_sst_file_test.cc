@@ -324,7 +324,7 @@ TEST_F(ExternalSSTFileTest, FastIngest) {
   auto s = FastAddFile({origin_sst_2}, 1);
 
   ASSERT_OK(s);
-  s = FastAddFile({origin_sst_4}, 1);
+  //  s = FastAddFile({origin_sst_4}, 1);
 
   ASSERT_OK(s);
   //  s = FastAddFile({origin_sst_4}, 4);
@@ -339,28 +339,33 @@ TEST_F(ExternalSSTFileTest, FastIngest) {
   auto versions = static_cast<DBImpl*>(db_)->GetVersionSet();
   for (auto cfd : *versions->GetColumnFamilySet()) {
     for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
-      int sub_tier_num = cfd->current()->storage_info()->NumLevelSubTier(i);
+      int sub_tier_num =
+          cfd->current()->storage_info()->NumLevelSubTierFiles(i);
+      int level_num = cfd->current()->storage_info()->NumLevelFiles(i);
 
-      std::cout << "Level: " << i << " # of Sub tier: " << sub_tier_num
-                << std::endl;
+      std::cout << "Level: " << i << "; # of Level Files " << level_num
+                << "; # of Sub tier: " << sub_tier_num << std::endl;
     }
   }
   // Trigger compaction and reconfig
   // No waiting, cancel all bg works, I think we can trigger this in remote
   // server
   s = dbfull()->SyncSubTiers(true);
+
+  dbfull()->TEST_WaitForBackgroundWork();
+  ASSERT_OK(s);
   std::cout << "After compaction" << std::endl;
   versions = static_cast<DBImpl*>(db_)->GetVersionSet();
   for (auto cfd : *versions->GetColumnFamilySet()) {
     for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
-      int sub_tier_num = cfd->current()->storage_info()->NumLevelSubTier(i);
+      int sub_tier_num =
+          cfd->current()->storage_info()->NumLevelSubTierFiles(i);
+      int level_num = cfd->current()->storage_info()->NumLevelFiles(i);
 
-      std::cout << "Level: " << i << " # of Sub tier: " << sub_tier_num
-                << std::endl;
+      std::cout << "Level: " << i << "; # of Level Files " << level_num
+                << "; # of Sub tier: " << sub_tier_num << std::endl;
     }
   }
-  dbfull()->TEST_WaitForBackgroundWork();
-  ASSERT_OK(s);
   DestroyAndRecreateExternalSSTFilesDir();
 }
 

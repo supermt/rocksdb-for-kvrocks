@@ -681,7 +681,7 @@ class VersionBuilder::Rep {
     }
 
     assert(base_vstorage_);
-    return base_vstorage_->GetFileLocation(file_number).GetLevel();
+    return base_vstorage_->GetFileLocation(file_number).GetSubTier();
   }
 
   uint64_t GetOldestBlobFileNumberForTableFile(int level,
@@ -710,6 +710,7 @@ class VersionBuilder::Rep {
     assert(level != VersionStorageInfo::FileLocation::Invalid().GetLevel());
 
     const int current_level = GetCurrentLevelForTableFile(file_number);
+    const int current_tier = GetCurrentTierForTableFile(file_number);
 
     if (level != current_level) {
       if (level >= num_levels_) {
@@ -750,21 +751,40 @@ class VersionBuilder::Rep {
       }
     }
 
-    auto& level_state = levels_[level];
+    if (current_tier >= 0) {
+      auto& tier_state = sub_tiers_[level][current_tier];
+      auto& add_files = tier_state.added_files;
+      auto add_it = add_files.find(file_number);
+      if (add_it != add_files.end()) {
+        UnrefFile(add_it->second);
+        add_files.erase(add_it);
+      }
 
-    auto& add_files = level_state.added_files;
-    auto add_it = add_files.find(file_number);
-    if (add_it != add_files.end()) {
-      UnrefFile(add_it->second);
-      add_files.erase(add_it);
+      auto& del_files = tier_state.deleted_files;
+      assert(del_files.find(file_number) == del_files.end());
+      del_files.emplace(file_number);
+
+      table_file_levels_[file_number] =
+          VersionStorageInfo::FileLocation::Invalid().GetLevel();
+      table_file_tiers_[file_number] =
+          VersionStorageInfo::FileLocation::Invalid().GetSubTier();
+    } else {
+      auto& level_state = levels_[level];
+
+      auto& add_files = level_state.added_files;
+      auto add_it = add_files.find(file_number);
+      if (add_it != add_files.end()) {
+        UnrefFile(add_it->second);
+        add_files.erase(add_it);
+      }
+
+      auto& del_files = level_state.deleted_files;
+      assert(del_files.find(file_number) == del_files.end());
+      del_files.emplace(file_number);
+
+      table_file_levels_[file_number] =
+          VersionStorageInfo::FileLocation::Invalid().GetLevel();
     }
-
-    auto& del_files = level_state.deleted_files;
-    assert(del_files.find(file_number) == del_files.end());
-    del_files.emplace(file_number);
-
-    table_file_levels_[file_number] =
-        VersionStorageInfo::FileLocation::Invalid().GetLevel();
 
     return Status::OK();
   }
@@ -1195,8 +1215,8 @@ class VersionBuilder::Rep {
                        process_mutable, process_both);
   }
 
-  void MaybeAddSubTierFile(VersionStorageInfo* vstorage, int level,
-                           int sub_tier, FileMetaData* f) const {
+  int MaybeAddSubTierFile(VersionStorageInfo* vstorage, int level, int sub_tier,
+                          FileMetaData* f) const {
     const uint64_t file_number = f->fd.GetNumber();
 
     const auto& level_state = sub_tiers_[level][sub_tier];
@@ -1207,6 +1227,7 @@ class VersionBuilder::Rep {
     if (del_it != del_files.end()) {
       // f is to-be-deleted table file
       vstorage->RemoveCurrentStats(f);
+      return 0;
     } else {
       const auto& add_files = level_state.added_files;
       const auto add_it = add_files.find(file_number);
@@ -1215,8 +1236,10 @@ class VersionBuilder::Rep {
       // list, the added FileMetaData supersedes the one in the base version.
       if (add_it != add_files.end() && add_it->second != f) {
         vstorage->RemoveCurrentStats(f);
+        return 0;
       } else {
         vstorage->AddFileToSubTier(level, sub_tier, f);
+        return 1;
       }
     }
   }
@@ -1321,9 +1344,14 @@ class VersionBuilder::Rep {
     const auto& added_files = base_vstorage_->SubTierFiles(level, sub_tier);
     vstorage->Reserve(level, sub_tier, added_files.size());
 
+    int target_tier_files = 0;
     for (auto added_file : added_files) {
-      MaybeAddSubTierFile(vstorage, level, sub_tier, added_file);
+      target_tier_files +=
+          MaybeAddSubTierFile(vstorage, level, sub_tier, added_file);
     }
+//    if (target_tier_files == 0) {
+    //      vstorage->DeleteSubTier(level, sub_tier);
+    //    }
   }
 
   template <typename Cmp>

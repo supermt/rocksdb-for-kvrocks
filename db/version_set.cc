@@ -3970,6 +3970,9 @@ void VersionStorageInfo::GenerateFileLocationIndex() {
 
   for (int level = 0; level < num_levels_; ++level) {
     num_files += files_[level].size();
+    for (uint64_t tier_no; tier_no < NumLevelSubTier(level); tier_no++) {
+      num_files += sub_tiers_[level][tier_no].size();
+    }
   }
 
   file_locations_.reserve(num_files);
@@ -3983,6 +3986,17 @@ void VersionStorageInfo::GenerateFileLocationIndex() {
 
       assert(file_locations_.find(file_number) == file_locations_.end());
       file_locations_.emplace(file_number, FileLocation(level, pos));
+    }
+    for (uint64_t tier_no; tier_no < NumLevelSubTier(level); tier_no++) {
+      for (size_t pos = 0; pos < sub_tiers_[level][tier_no].size(); ++pos) {
+        const FileMetaData* const meta = sub_tiers_[level][tier_no][pos];
+        assert(meta);
+
+        const uint64_t file_number = meta->fd.GetNumber();
+
+        assert(file_locations_.find(file_number) == file_locations_.end());
+        file_locations_.emplace(file_number, FileLocation(level, tier_no, pos));
+      }
     }
   }
 }
@@ -4544,6 +4558,11 @@ bool VersionStorageInfo::RangeMightExistAfterSortedRun(
 }
 int VersionStorageInfo::CreateSubTier(int level) {
   sub_tiers_[level].emplace_back();
+  return NumLevelSubTier(level);
+}
+int VersionStorageInfo::DeleteSubTier(int level, int sub_tier) {
+  auto target_tier = sub_tiers_[level];
+  target_tier.erase(target_tier.begin() + sub_tier);
   return NumLevelSubTier(level);
 }
 

@@ -328,20 +328,36 @@ class VersionStorageInfo {
   }
 
   uint64_t NumLevelSubTier(int level) const { return sub_tiers_[level].size(); }
+  uint64_t NumLevelSubTierFiles(int level) const {
+    uint64_t total_files = 0;
+    for (auto tier : sub_tiers_[level]) {
+      total_files += tier.size();
+    }
+    return total_files;
+  }
+  uint64_t NumLevelSubTierFiles(int level, int sub_tier) const {
+    return sub_tiers_[level][sub_tier].size();
+  }
   int CreateSubTier(int level);
+  int DeleteSubTier(int level, int sub_tier);
   class FileLocation {
    public:
     FileLocation() = default;
     FileLocation(int level, size_t position)
-        : level_(level), position_(position) {}
+        : level_(level), tier_no_(-1), position_(position) {}
+
+    FileLocation(int level, int tier_no, size_t position)
+        : level_(level), tier_no_(tier_no), position_(position) {}
 
     int GetLevel() const { return level_; }
+    int GetSubTier() const { return tier_no_; }
     size_t GetPosition() const { return position_; }
 
     bool IsValid() const { return level_ >= 0; }
 
     bool operator==(const FileLocation& rhs) const {
-      return level_ == rhs.level_ && position_ == rhs.position_;
+      return level_ == rhs.level_ && position_ == rhs.position_ &&
+             tier_no_ == rhs.tier_no_;
     }
 
     bool operator!=(const FileLocation& rhs) const { return !(*this == rhs); }
@@ -350,6 +366,7 @@ class VersionStorageInfo {
 
    private:
     int level_ = -1;
+    int tier_no_ = -1;
     size_t position_ = 0;
   };
 
@@ -360,12 +377,22 @@ class VersionStorageInfo {
     if (it == file_locations_.end()) {
       return FileLocation::Invalid();
     }
-
-    assert(it->second.GetLevel() < num_levels_);
-    assert(it->second.GetPosition() < files_[it->second.GetLevel()].size());
-    assert(files_[it->second.GetLevel()][it->second.GetPosition()]);
-    assert(files_[it->second.GetLevel()][it->second.GetPosition()]
-               ->fd.GetNumber() == file_number);
+    if (it->second.GetSubTier() >= 0) {
+      assert(it->second.GetLevel() < num_levels_);
+      assert(it->second.GetPosition() <
+             sub_tiers_[it->second.GetLevel()][it->second.GetSubTier()].size());
+      assert(sub_tiers_[it->second.GetLevel()][it->second.GetSubTier()]
+                       [it->second.GetPosition()]);
+      assert(sub_tiers_[it->second.GetLevel()][it->second.GetSubTier()]
+                       [it->second.GetPosition()]
+                           ->fd.GetNumber() == file_number);
+    } else {
+      assert(it->second.GetLevel() < num_levels_);
+      assert(it->second.GetPosition() < files_[it->second.GetLevel()].size());
+      assert(files_[it->second.GetLevel()][it->second.GetPosition()]);
+      assert(files_[it->second.GetLevel()][it->second.GetPosition()]
+                 ->fd.GetNumber() == file_number);
+    }
 
     return it->second;
   }
@@ -376,6 +403,10 @@ class VersionStorageInfo {
 
     if (!location.IsValid()) {
       return nullptr;
+    }
+    if (location.GetSubTier() >= 0) {
+      return sub_tiers_[location.GetLevel()][location.GetSubTier()]
+                       [location.GetPosition()];
     }
 
     return files_[location.GetLevel()][location.GetPosition()];

@@ -446,10 +446,9 @@ class VersionEdit {
     }
   }
 
-  void AddFileToSublevel(int level, const FileMetaData& f, int sub_level) {
+  void AddFileToSublevel(int level, const FileMetaData& f, int sub_tier) {
     assert(f.fd.smallest_seqno <= f.fd.largest_seqno);
-    double sub_level_float = (double)level + (double)sub_level / 10.0;
-    new_subtier_files_.emplace_back(sub_level_float, f);
+    new_subtier_files_.emplace_back(level, sub_tier, f);
     if (!HasLastSequence() || f.fd.largest_seqno > GetLastSequence()) {
       SetLastSequence(f.fd.largest_seqno);
     }
@@ -457,7 +456,7 @@ class VersionEdit {
 
   // Retrieve the table files added as well as their associated levels.
   using NewFiles = std::vector<std::pair<int, FileMetaData>>;
-  using NewSubTierFiles = std::vector<std::pair<double, FileMetaData>>;
+  using NewSubTierFiles = std::vector<std::tuple<int, int, FileMetaData>>;
   const NewFiles& GetNewFiles() const { return new_files_; }
   const NewSubTierFiles& GetNewSubTierFiles() const {
     return new_subtier_files_;

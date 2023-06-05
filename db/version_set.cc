@@ -1756,6 +1756,7 @@ void Version::GetColumnFamilyMetaData(ColumnFamilyMetaData* cf_meta) {
     uint64_t level_size = 0;
     cf_meta->file_count += vstorage->LevelFiles(level).size();
     std::vector<SstFileMetaData> files;
+    std::vector<std::vector<SstFileMetaData>> sub_tiers;
     for (const auto& file : vstorage->LevelFiles(level)) {
       uint32_t path_id = file->fd.GetPathId();
       std::string file_path;
@@ -1780,9 +1781,41 @@ void Version::GetColumnFamilyMetaData(ColumnFamilyMetaData* cf_meta) {
       files.back().num_deletions = file->num_deletions;
       level_size += file->fd.GetFileSize();
     }
-    cf_meta->levels.emplace_back(level, level_size, std::move(files));
+    for (uint64_t tier_no = 0; tier_no < vstorage->NumLevelSubTier(level);
+         tier_no++) {
+      std::vector<SstFileMetaData> tier_files;
+      for (const auto& file : vstorage->SubTierFiles(level, tier_no)) {
+        uint32_t path_id = file->fd.GetPathId();
+        std::string file_path;
+        if (path_id < ioptions->cf_paths.size()) {
+          file_path = ioptions->cf_paths[path_id].path;
+        } else {
+          assert(!ioptions->cf_paths.empty());
+          file_path = ioptions->cf_paths.back().path;
+        }
+        const uint64_t file_number = file->fd.GetNumber();
+        tier_files.emplace_back(
+            MakeTableFileName("", file_number), file_number, file_path,
+            file->fd.GetFileSize(), file->fd.smallest_seqno,
+            file->fd.largest_seqno, file->smallest.user_key().ToString(),
+            file->largest.user_key().ToString(),
+            file->stats.num_reads_sampled.load(std::memory_order_relaxed),
+            file->being_compacted, file->temperature,
+            file->oldest_blob_file_number, file->TryGetOldestAncesterTime(),
+            file->TryGetFileCreationTime(), file->file_checksum,
+            file->file_checksum_func_name);
+        tier_files.back().num_entries = file->num_entries;
+        tier_files.back().num_deletions = file->num_deletions;
+        level_size += file->fd.GetFileSize();
+      }
+      sub_tiers.push_back(tier_files);
+    }
+
+    cf_meta->levels.emplace_back(level, level_size, std::move(files),
+                                 std::move(sub_tiers));
     cf_meta->size += level_size;
   }
+  // fill blob list
   for (const auto& meta : vstorage->GetBlobFiles()) {
     assert(meta);
 

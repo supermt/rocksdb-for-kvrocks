@@ -240,6 +240,7 @@ class VersionBuilder::Rep {
   int num_levels_;
   LevelState* levels_;
   LevelState** sub_tiers_;
+  int* number_of_sub_tiers_in_level_;
   // Store sizes of levels larger than num_levels_. We do this instead of
   // storing them in levels_ to avoid regression in case there are no files
   // on invalid levels. The version is not consistent if in the end the files
@@ -280,9 +281,11 @@ class VersionBuilder::Rep {
 
     levels_ = new LevelState[num_levels_];
     sub_tiers_ = new LevelState*[num_levels_];
+    number_of_sub_tiers_in_level_ = new int[num_levels_];
     for (int i = 0; i < base_vstorage->num_levels(); i++) {
       int sub_tiers = base_vstorage->NumLevelSubTier(i);
       sub_tiers_[i] = new LevelState[sub_tiers + 1];
+      number_of_sub_tiers_in_level_[i] = sub_tiers;
       // leave at least one empty sub-tier for further insert
     }
   }
@@ -292,6 +295,15 @@ class VersionBuilder::Rep {
       const auto& added = levels_[level].added_files;
       for (auto& pair : added) {
         UnrefFile(pair.second);
+      }
+    }
+    for (int level = 0; level < num_levels_; level++) {
+      for (int tier_no; tier_no < number_of_sub_tiers_in_level_[level];
+           tier_no++) {
+        const auto& added = sub_tiers_[level][tier_no].added_files;
+        for (auto& pair : added) {
+          UnrefFile(pair.second);
+        }
       }
     }
 
@@ -948,13 +960,16 @@ class VersionBuilder::Rep {
 
     // Fast ingestion: add new sub tier files
     for (const auto& new_file : edit->GetNewSubTierFiles()) {
-      const int level = new_file.first;
-      const int sub_tier = (new_file.first - level) * 10;
-      const FileMetaData& meta = new_file.second;
+      const int level = std::get<0>(new_file);
+      const int sub_tier = std::get<1>(new_file);
+      const FileMetaData& meta = std::get<2>(new_file);
 
       const Status s = ApplySubTierFileAddition(level, sub_tier, meta);
       if (!s.ok()) {
         return s;
+      }
+      if (sub_tier >= number_of_sub_tiers_in_level_[level]) {
+        number_of_sub_tiers_in_level_[level] += 1;
       }
     }
 
@@ -1180,11 +1195,11 @@ class VersionBuilder::Rep {
                        process_mutable, process_both);
   }
 
-  void MaybeAddSubTier(VersionStorageInfo* vstorage, int level, int sub_tier,
-                       FileMetaData* f) const {
+  void MaybeAddSubTierFile(VersionStorageInfo* vstorage, int level,
+                           int sub_tier, FileMetaData* f) const {
     const uint64_t file_number = f->fd.GetNumber();
 
-    const auto& level_state = levels_[level];
+    const auto& level_state = sub_tiers_[level][sub_tier];
 
     const auto& del_files = level_state.deleted_files;
     const auto del_it = del_files.find(file_number);
@@ -1269,32 +1284,32 @@ class VersionBuilder::Rep {
       return;
     }
     // save all existing sub tier files
-
     for (int level = 0; level < num_levels_; level++) {
       int sub_tier_files = base_vstorage_->NumLevelSubTier(level);
       if (sub_tier_files > 0) {
         // there are existing sub tiers
         for (int i = 0; i < sub_tier_files; i++) {
           vstorage->CreateSubTier(level);
-          if (level == 0) {
-            CopySubTierTo(vstorage, level, i);
-          } else {
-            CopySubTierTo(vstorage, level, i);
-          }
+          CopySubTierTo(vstorage, level, i);
         }
       }
     }
 
     for (int level = 0; level < num_levels_; level++) {
-      if (sub_tiers_[level]->added_files.size() > 0) {
-        //        base_vstorage_->CreateSubTier(level);
-        vstorage->CreateSubTier(level);
-        if (level == 0) {
-          SaveSubTierTo(vstorage, level, base_vstorage_->NumLevelSubTier(level),
-                        level_zero_cmp_);
-        } else {
-          SaveSubTierTo(vstorage, level, base_vstorage_->NumLevelSubTier(level),
-                        level_nonzero_cmp_);
+      for (int tier_no = 0; tier_no < number_of_sub_tiers_in_level_[level];
+           tier_no++) {
+        if (sub_tiers_[level][tier_no].added_files.size() > 0) {
+          //        base_vstorage_->CreateSubTier(level);
+          vstorage->CreateSubTier(level);
+          if (level == 0) {
+            SaveSubTierTo(vstorage, level,
+                          base_vstorage_->NumLevelSubTier(level),
+                          level_zero_cmp_);
+          } else {
+            SaveSubTierTo(vstorage, level,
+                          base_vstorage_->NumLevelSubTier(level),
+                          level_nonzero_cmp_);
+          }
         }
       }
     }
@@ -1307,7 +1322,7 @@ class VersionBuilder::Rep {
     vstorage->Reserve(level, sub_tier, added_files.size());
 
     for (auto added_file : added_files) {
-      MaybeAddSubTier(vstorage, level, sub_tier, added_file);
+      MaybeAddSubTierFile(vstorage, level, sub_tier, added_file);
     }
   }
 
@@ -1316,7 +1331,7 @@ class VersionBuilder::Rep {
                      Cmp cmp) const {
     // For Sub-tier, we don't merge, only insert into new levels;
     const auto& unordered_added_files = sub_tiers_[level][sub_tier].added_files;
-    vstorage->Reserve(level, unordered_added_files.size());
+    vstorage->Reserve(level, sub_tier, unordered_added_files.size());
 
     // Sort added files for the level.
     std::vector<FileMetaData*> added_files;
@@ -1327,13 +1342,8 @@ class VersionBuilder::Rep {
     std::sort(added_files.begin(), added_files.end(), cmp);
 
     for (auto added_file : added_files) {
-      MaybeAddSubTier(vstorage, level, sub_tier, added_file);
+      MaybeAddSubTierFile(vstorage, level, sub_tier, added_file);
     }
-    //    auto added_iter = added_files.begin();
-    //    auto added_end = added_files.end();
-    //    while (added_iter != added_end) {
-    //      MaybeAddSubTier(vstorage, level, sub_tier, *added_iter++);
-    //    }
   }
 
   void SaveSSTFilesTo(VersionStorageInfo* vstorage) const {

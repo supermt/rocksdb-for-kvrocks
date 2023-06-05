@@ -1374,6 +1374,21 @@ Status DBImpl::CompactFilesImpl(
     std::vector<std::string>* const output_file_names, const int output_level,
     int output_path_id, JobContext* job_context, LogBuffer* log_buffer,
     CompactionJobInfo* compaction_job_info) {
+  std::vector<uint64_t> input_set;
+  for (const auto& file_name : input_file_names) {
+    input_set.push_back(TableFileNameToNumber(file_name));
+  }
+  return CompactFilesImpl(compact_options, cfd, version, input_set,
+                          output_file_names, output_level, output_path_id,
+                          job_context, log_buffer, compaction_job_info);
+}
+
+Status DBImpl::CompactFilesImpl(
+    const CompactionOptions& compact_options, ColumnFamilyData* cfd,
+    Version* version, const std::vector<uint64_t>& input_set_,
+    std::vector<std::string>* const output_file_names, const int output_level,
+    int output_path_id, JobContext* job_context, LogBuffer* log_buffer,
+    CompactionJobInfo* compaction_job_info) {
   mutex_.AssertHeld();
 
   if (shutting_down_.load(std::memory_order_acquire)) {
@@ -1384,10 +1399,12 @@ Status DBImpl::CompactFilesImpl(
   }
 
   std::unordered_set<uint64_t> input_set;
-  for (const auto& file_name : input_file_names) {
-    input_set.insert(TableFileNameToNumber(file_name));
+  //  for (const auto& file_name : input_file_names) {
+  //    input_set.insert(TableFileNameToNumber(file_name));
+  //  }
+  for (const auto& file_num : input_set_) {
+    input_set.insert(file_num);
   }
-
   ColumnFamilyMetaData cf_meta;
   // TODO(yhchiang): can directly use version here if none of the
   // following functions call is pluggable to external developers.

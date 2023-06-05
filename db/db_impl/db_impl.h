@@ -849,6 +849,7 @@ class DBImpl : public DB {
   // sends the signals.
   void CancelAllBackgroundWork(bool wait);
 
+  Status SyncSubTiers(bool wait);
   // Find Super version and reference it. Based on options, it might return
   // the thread local cached one.
   // Call ReturnAndCleanupSuperVersion() when it is no longer needed.
@@ -1253,6 +1254,14 @@ class DBImpl : public DB {
   static std::string GenerateDbSessionId(Env* env);
 
   bool seq_per_batch() const { return seq_per_batch_; }
+
+  Status CompactFilesImpl(const CompactionOptions& compact_options,
+                          ColumnFamilyData* cfd, Version* version,
+                          const std::vector<uint64_t>& input_file_number,
+                          std::vector<std::string>* const output_file_names,
+                          const int output_level, int output_path_id,
+                          JobContext* job_context, LogBuffer* log_buffer,
+                          CompactionJobInfo* compaction_job_info);
 
  protected:
   const std::string dbname_;

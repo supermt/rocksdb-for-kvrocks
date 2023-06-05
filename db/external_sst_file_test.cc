@@ -314,12 +314,28 @@ TEST_F(ExternalSSTFileTest, FastIngest) {
   // a file.
   ASSERT_EQ(sst_file_writer.FileSize(), 0);
 
-  std::string origin_sst = "/home/supermt/000061.sst";
+  std::string origin_sst = "/home/supermt/000024.sst";
+  std::string origin_sst_2 = "/home/supermt/000025.sst";
+  std::string origin_sst_3 = "/home/supermt/000035.sst";
+  std::string origin_sst_4 = "/home/supermt/000061.sst";
 
   DestroyAndReopen(options);
 
-  auto s = FastAddFile({origin_sst}, 1);
+  auto s = FastAddFile({origin_sst_2}, 1);
+
   ASSERT_OK(s);
+  s = FastAddFile({origin_sst_4}, 1);
+
+  ASSERT_OK(s);
+  //  s = FastAddFile({origin_sst_4}, 4);
+  //  s = FastAddFile({origin_sst}, 1);
+  //  s = FastAddFile({origin_sst}, 1);
+  ASSERT_OK(s);
+  //  s = FastAddFile({origin_sst}, 4);
+  ASSERT_OK(s);
+
+  std::cout << "Before compaction" << std::endl;
+
   auto versions = static_cast<DBImpl*>(db_)->GetVersionSet();
   for (auto cfd : *versions->GetColumnFamilySet()) {
     for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
@@ -329,13 +345,11 @@ TEST_F(ExternalSSTFileTest, FastIngest) {
                 << std::endl;
     }
   }
-  std::cout << "After fast ingestion in level 2" << std::endl;
-  s = FastAddFile({origin_sst}, 2);
-  s = FastAddFile({origin_sst}, 4);
-  ASSERT_OK(s);
-  // Add file using file path
-  //    ASSERT_OK(DeprecatedAddFile({"/home/supermt/000074.sst"}));
-  //    ASSERT_OK(DeprecatedAddFile({"/home/supermt/000075.sst"}));
+  // Trigger compaction and reconfig
+  // No waiting, cancel all bg works, I think we can trigger this in remote
+  // server
+  s = dbfull()->SyncSubTiers(true);
+  std::cout << "After compaction" << std::endl;
   versions = static_cast<DBImpl*>(db_)->GetVersionSet();
   for (auto cfd : *versions->GetColumnFamilySet()) {
     for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
@@ -345,8 +359,8 @@ TEST_F(ExternalSSTFileTest, FastIngest) {
                 << std::endl;
     }
   }
+  dbfull()->TEST_WaitForBackgroundWork();
   ASSERT_OK(s);
-
   DestroyAndRecreateExternalSSTFilesDir();
 }
 

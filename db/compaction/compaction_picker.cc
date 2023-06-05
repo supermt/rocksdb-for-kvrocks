@@ -416,6 +416,21 @@ Status CompactionPicker::GetCompactionInputsFromFileNumbers(
         }
       }
     }
+    for (uint64_t tier_no = 0; tier_no < vstorage->NumLevelSubTier(level);
+         tier_no++) {
+      // search through tier_no
+      for (auto file : vstorage->SubTierFiles(level, tier_no)) {
+        auto iter = input_set->find(file->fd.GetNumber());
+        if (iter != input_set->end()) {
+          matched_input_files[level].files.push_back(file);
+          input_set->erase(iter);
+          last_non_empty_level = level;
+          if (first_non_empty_level == -1) {
+            first_non_empty_level = level;
+          }
+        }
+      }
+    }
   }
 
   if (!input_set->empty()) {
@@ -1067,7 +1082,7 @@ Status CompactionPicker::SanitizeCompactionInputFiles(
     return Status::InvalidArgument(
         "A compaction must contain at least one file.");
   }
-
+  // TODO: modify this to check the compaction style.
   Status s = SanitizeCompactionInputFilesForAllLevels(input_files, cf_meta,
                                                       output_level);
 
@@ -1093,10 +1108,25 @@ Status CompactionPicker::SanitizeCompactionInputFiles(
           break;
         }
       }
+      for (const auto& sub_tier : level_meta.sub_tiers) {
+        for (const auto& file_meta : sub_tier) {
+          if (file_num == TableFileNameToNumber(file_meta.name)) {
+            if (file_meta.being_compacted) {
+              return Status::Aborted("Specified compaction input file " +
+                                     MakeTableFileName("", file_num) +
+                                     " is already being compacted.");
+            }
+            found = true;
+            input_file_level = level_meta.level;
+            break;
+          }
+        }
+      }
       if (found) {
         break;
       }
     }
+    // make it found
     if (!found) {
       return Status::InvalidArgument(
           "Specified compaction input file " + MakeTableFileName("", file_num) +

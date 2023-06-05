@@ -234,6 +234,8 @@ void CompactionJob::Prepare() {
   ColumnFamilyData* cfd = c->column_family_data();
   assert(cfd != nullptr);
   assert(cfd->current()->storage_info()->NumLevelFiles(
+             compact_->compaction->level()) > 0 ||
+         cfd->current()->storage_info()->NumLevelSubTier(
              compact_->compaction->level()) > 0);
 
   write_hint_ = cfd->CalculateSSTWriteHint(c->output_level());
@@ -674,11 +676,12 @@ Status CompactionJob::Run() {
           break;
         }
         // Verify that the table is usable
-        // We set for_compaction to false and don't OptimizeForCompactionTableRead
-        // here because this is a special case after we finish the table building
-        // No matter whether use_direct_io_for_flush_and_compaction is true,
-        // we will regard this verification as user reads since the goal is
-        // to cache it here for further user reads
+        // We set for_compaction to false and don't
+        // OptimizeForCompactionTableRead here because this is a special case
+        // after we finish the table building No matter whether
+        // use_direct_io_for_flush_and_compaction is true, we will regard this
+        // verification as user reads since the goal is to cache it here for
+        // further user reads
         ReadOptions read_options;
         InternalIterator* iter = cfd->table_cache()->NewIterator(
             read_options, file_options_, cfd->internal_comparator(),
@@ -724,8 +727,8 @@ Status CompactionJob::Run() {
       }
     };
     for (size_t i = 1; i < compact_->sub_compact_states.size(); i++) {
-      thread_pool.emplace_back(verify_table,
-                               std::ref(compact_->sub_compact_states[i].status));
+      thread_pool.emplace_back(
+          verify_table, std::ref(compact_->sub_compact_states[i].status));
     }
     verify_table(compact_->sub_compact_states[0].status);
     for (auto& thread : thread_pool) {

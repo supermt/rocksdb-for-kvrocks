@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
+#include <iostream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -1452,7 +1453,65 @@ Status DBImpl::FlushWAL(bool sync) {
   ROCKS_LOG_DEBUG(immutable_db_options_.info_log, "FlushWAL sync=true");
   return SyncWAL();
 }
+Status DBImpl::SyncSubTiers(bool wait) {
+  //  this->compaction_queue_.emplace_back();
+  //    this->MaybeScheduleFlushOrCompaction();
+  LogBuffer log_buffer(InfoLogLevel::INFO_LEVEL,
+                       immutable_db_options_.info_log.get());
+  Status s;
+  for (auto cfd : *versions_->GetColumnFamilySet()) {
+    auto vfs = cfd->current()->storage_info();
+    for (int level = 0; level < vfs->num_levels(); level++) {
+      autovector<FileMetaData*> compact_candidates;
+      std::vector<uint64_t> input_files_number;
+      for (uint64_t sub_tier_id = 0; sub_tier_id < vfs->NumLevelSubTier(level);
+           sub_tier_id++) {
+        for (auto f : vfs->SubTierFiles(level, sub_tier_id)) {
+          compact_candidates.push_back(f);
+          input_files_number.push_back(f->fd.GetNumber());
+        }
+      }
+      CompactionOptions compact_opt;
 
+      if (compact_candidates.size() > 0) {
+        JobContext job_context(next_job_id_.fetch_add(1), true);
+
+        {
+          InstrumentedMutexLock l(&mutex_);
+          WaitForIngestFile();
+          auto* current = cfd->current();
+          auto output_path_id = compact_candidates.back()->fd.GetPathId();
+          std::vector<std::string> output_file_names;
+          current->Ref();
+          s = this->CompactFilesImpl(
+              compact_opt, cfd->current()->cfd(), cfd->current(),
+              input_files_number, &output_file_names, level + 1, output_path_id,
+              &job_context, &log_buffer, nullptr);
+          current->Unref();
+        }  // end of compaction lock
+        {
+          InstrumentedMutexLock l(&mutex_);
+          FindObsoleteFiles(&job_context, !s.ok());
+        }
+        if (job_context.HaveSomethingToClean() ||
+            job_context.HaveSomethingToDelete() || !log_buffer.IsEmpty()) {
+          log_buffer.FlushBufferToLog();
+          if (job_context.HaveSomethingToDelete()) {
+            PurgeObsoleteFiles(job_context);
+          }
+          job_context.Clean();
+        }
+        if (!s.ok()) {
+          return s;
+        }
+        std::cout << "Compaction finished: at level " << level
+                  << " input_file number " << input_files_number.size()
+                  << std::endl;
+      }  // end of IF: need compaction
+    }    // end of sync one level
+  }
+  return s;
+}
 Status DBImpl::SyncWAL() {
   TEST_SYNC_POINT("DBImpl::SyncWAL:Begin");
   autovector<log::Writer*, 1> logs_to_sync;

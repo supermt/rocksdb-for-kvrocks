@@ -155,7 +155,8 @@ struct SstFileMetaData : public FileStorageInfo {
 struct LiveFileMetaData : SstFileMetaData {
   std::string column_family_name;  // Name of the column family
   int level;                       // Level at which this file resides.
-  LiveFileMetaData() : column_family_name(), level(0) {}
+  int sub_tier;
+  LiveFileMetaData() : column_family_name(), level(0), sub_tier(0) {}
 };
 
 // The MetaData that describes a Blob file
@@ -200,7 +201,11 @@ struct BlobMetaData {
 struct LevelMetaData {
   LevelMetaData(int _level, uint64_t _size,
                 const std::vector<SstFileMetaData>&& _files)
-      : level(_level), size(_size), files(_files) {}
+      : level(_level), size(_size), files(_files), sub_tiers() {}
+  LevelMetaData(int _level, uint64_t _size,
+                const std::vector<SstFileMetaData>&& _files,
+                std::vector<std::vector<SstFileMetaData>>&& _sub_tiers)
+      : level(_level), size(_size), files(_files), sub_tiers(_sub_tiers) {}
 
   // The level which this meta data describes.
   const int level;
@@ -209,6 +214,8 @@ struct LevelMetaData {
   const uint64_t size;
   // The metadata of all sst files in this level.
   const std::vector<SstFileMetaData> files;
+
+  const std::vector<std::vector<SstFileMetaData>> sub_tiers;
 };
 
 // The metadata that describes a column family.

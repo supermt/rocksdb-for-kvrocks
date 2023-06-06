@@ -1463,51 +1463,22 @@ Status DBImpl::SyncSubTiers(bool wait) {
     auto vfs = cfd->current()->storage_info();
     for (int level = 0; level < vfs->num_levels(); level++) {
       autovector<FileMetaData*> compact_candidates;
-      std::vector<uint64_t> input_files_number;
+      std::vector<std::string> input_file_name;
       for (uint64_t sub_tier_id = 0; sub_tier_id < vfs->NumLevelSubTier(level);
            sub_tier_id++) {
         for (auto f : vfs->SubTierFiles(level, sub_tier_id)) {
           compact_candidates.push_back(f);
-          input_files_number.push_back(f->fd.GetNumber());
+          input_file_name.push_back(TableFileName(
+              cfd->ioptions()->cf_paths, f->fd.GetNumber(), f->fd.GetPathId()));
         }
       }
       CompactionOptions compact_opt;
-
-      if (compact_candidates.size() > 0) {
-        JobContext job_context(next_job_id_.fetch_add(1), true);
-
-        {
-          InstrumentedMutexLock l(&mutex_);
-          WaitForIngestFile();
-          auto* current = cfd->current();
-          auto output_path_id = compact_candidates.back()->fd.GetPathId();
-          std::vector<std::string> output_file_names;
-          current->Ref();
-          s = this->CompactFilesImpl(
-              compact_opt, cfd->current()->cfd(), cfd->current(),
-              input_files_number, &output_file_names, level + 1, output_path_id,
-              &job_context, &log_buffer, nullptr);
-          current->Unref();
-        }  // end of compaction lock
-        {
-          InstrumentedMutexLock l(&mutex_);
-          FindObsoleteFiles(&job_context, !s.ok());
-        }
-        if (job_context.HaveSomethingToClean() ||
-            job_context.HaveSomethingToDelete() || !log_buffer.IsEmpty()) {
-          log_buffer.FlushBufferToLog();
-          if (job_context.HaveSomethingToDelete()) {
-            PurgeObsoleteFiles(job_context);
-          }
-          job_context.Clean();
-        }
+      if (!compact_candidates.empty()) {
+        s = CompactFiles(compact_opt, input_file_name, level + 1);
         if (!s.ok()) {
           return s;
         }
-        std::cout << "Compaction finished: at level " << level
-                  << " input_file number " << input_files_number.size()
-                  << std::endl;
-      }  // end of IF: need compaction
+      }  // end if need compaction
     }    // end of sync one level
   }
   return s;

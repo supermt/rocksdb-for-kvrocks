@@ -1364,7 +1364,7 @@ void LevelIterator::Next() {
     // file_iter_ is at EOF already when to_return_sentinel_
     ClearSentinel();
   } else {
-    file_iter_.Next();
+    file_iter_.Next();  // this is a Block-Based-File iterator
     if (range_tombstone_iter_) {
       TrySetDeleteRangeSentinel(file_largest_key(file_index_));
     }
@@ -6529,14 +6529,41 @@ InternalIterator* VersionSet::MakeInputIterator(
   // Level-0 files have to be merged together.  For other levels,
   // we will make a concatenating iterator per level.
   // TODO(opt): use concatenating iterator for level-0 if there is no overlap
-  const size_t space = (c->level() == 0 ? c->input_levels(0)->num_files +
-                                              c->num_input_levels() - 1
-                                        : c->num_input_levels());
+  //  const size_t space = (c->level() == 0 ? c->input_levels(0)->num_files +
+  //                                              c->num_input_levels() - 1
+  //                                        : c->num_input_levels());
+  size_t level_sum = 0;
+  for (size_t i = 0; i < c->num_input_levels(); i++) {
+    size_t space_of_each_level = 0;
+    // For each file, locate it first
+    for (const auto& f : *c->inputs(i)) {
+      auto location =
+          cfd->current()->storage_info_.GetFileLocation(f->fd.GetNumber());
+      //      std::set<int> tier_no;
+      //      tier_no.clear();
+      if (location.GetLevel() == 0 || location.GetSubTier() >= 0) {
+        // either this level is in
+        space_of_each_level++;
+      }
+    }
+    if (space_of_each_level < c->num_input_files(i)) {
+      // contains at least one none-zero files
+      space_of_each_level++;
+    }
+
+    level_sum += space_of_each_level;
+  }
+
+  const size_t space = level_sum;
+  // check if sub-tier is included;
+  //  size_t space = 0;
+
   InternalIterator** list = new InternalIterator*[space];
   size_t num = 0;
   for (size_t which = 0; which < c->num_input_levels(); which++) {
     if (c->input_levels(which)->num_files != 0) {
       if (c->level(which) == 0) {
+        // if, making level iterator for level 0
         const LevelFilesBrief* flevel = c->input_levels(which);
         for (size_t i = 0; i < flevel->num_files; i++) {
           const FileMetaData& fmd = *flevel->files[i].file_metadata;
@@ -6569,16 +6596,59 @@ InternalIterator* VersionSet::MakeInputIterator(
               /*allow_unprepared_value=*/false);
         }
       } else {
-        // Create concatenating iterator for the files from this level
-        list[num++] = new LevelIterator(
-            cfd->table_cache(), read_options, file_options_compactions,
-            cfd->internal_comparator(), c->input_levels(which),
-            c->mutable_cf_options()->prefix_extractor,
-            /*should_sample=*/false,
-            /*no per level latency histogram=*/nullptr,
-            TableReaderCaller::kCompaction, /*skip_filters=*/false,
-            /*level=*/static_cast<int>(c->level(which)), range_del_agg,
-            c->boundaries(which));
+        // before creating the file for the whole level, create level iterator
+        // for all sub-tier files
+        size_t num_sub_tier_files = 0;
+        for (const auto& f : *c->inputs(which)) {
+          auto location =
+              cfd->current()->storage_info_.GetFileLocation(f->fd.GetNumber());
+          //      std::set<int> tier_no;
+          //      tier_no.clear();
+          if (location.GetLevel() == 0 || location.GetSubTier() >= 0) {
+            num_sub_tier_files++;
+            // either this level is in
+            auto fmd = *f;
+            if (start.has_value() &&
+                cfd->user_comparator()->CompareWithoutTimestamp(
+                    start.value(), fmd.largest.user_key()) > 0) {
+              continue;
+            }
+            // We should be able to filter out the case where the end key
+            // equals to the end boundary, since the end key is exclusive.
+            // We try to be extra safe here.
+            if (end.has_value() &&
+                cfd->user_comparator()->CompareWithoutTimestamp(
+                    end.value(), fmd.smallest.user_key()) < 0) {
+              continue;
+            }
+
+            list[num++] = cfd->table_cache()->NewIterator(
+                read_options, file_options_compactions,
+                cfd->internal_comparator(), fmd, range_del_agg,
+                c->mutable_cf_options()->prefix_extractor,
+                /*table_reader_ptr=*/nullptr,
+                /*file_read_hist=*/nullptr, TableReaderCaller::kCompaction,
+                /*arena=*/nullptr,
+                /*skip_filters=*/false,
+                /*level=*/static_cast<int>(c->level(which)),
+                MaxFileSizeForL0MetaPin(*c->mutable_cf_options()),
+                /*smallest_compaction_key=*/nullptr,
+                /*largest_compaction_key=*/nullptr,
+                /*allow_unprepared_value=*/false);
+          }
+        }
+        if (num_sub_tier_files < c->num_input_files(which)) {
+          // Create concatenating iterator for the files from this level
+          list[num++] = new LevelIterator(
+              cfd->table_cache(), read_options, file_options_compactions,
+              cfd->internal_comparator(), c->input_levels(which),
+              c->mutable_cf_options()->prefix_extractor,
+              /*should_sample=*/false,
+              /*no per level latency histogram=*/nullptr,
+              TableReaderCaller::kCompaction, /*skip_filters=*/false,
+              /*level=*/static_cast<int>(c->level(which)), range_del_agg,
+              c->boundaries(which));
+        }
       }
     }
   }
@@ -6652,9 +6722,51 @@ void VersionSet::GetLiveFilesMetaData(std::vector<LiveFileMetaData>* metadata) {
         filemetadata.temperature = file->temperature;
         filemetadata.oldest_ancester_time = file->TryGetOldestAncesterTime();
         filemetadata.file_creation_time = file->TryGetFileCreationTime();
+        filemetadata.sub_tier = -1;
         metadata->push_back(filemetadata);
       }
-    }
+      // for each level, update sub_tier info
+      for (uint64_t tier_no = 0;
+           tier_no < cfd->current()->storage_info()->NumLevelSubTier(level);
+           tier_no++) {
+        // iterate through all subtiers
+        for (const auto& file :
+             cfd->current()->storage_info_.SubTierFiles(level, tier_no)) {
+          LiveFileMetaData filemetadata;
+          filemetadata.column_family_name = cfd->GetName();
+          uint32_t path_id = file->fd.GetPathId();
+          if (path_id < cfd->ioptions()->cf_paths.size()) {
+            filemetadata.db_path = cfd->ioptions()->cf_paths[path_id].path;
+          } else {
+            assert(!cfd->ioptions()->cf_paths.empty());
+            filemetadata.db_path = cfd->ioptions()->cf_paths.back().path;
+          }
+          filemetadata.directory = filemetadata.db_path;
+          const uint64_t file_number = file->fd.GetNumber();
+          filemetadata.name = MakeTableFileName("", file_number);
+          filemetadata.relative_filename = filemetadata.name.substr(1);
+          filemetadata.file_number = file_number;
+          filemetadata.level = level;
+          filemetadata.size = file->fd.GetFileSize();
+          filemetadata.smallestkey = file->smallest.user_key().ToString();
+          filemetadata.largestkey = file->largest.user_key().ToString();
+          filemetadata.smallest_seqno = file->fd.smallest_seqno;
+          filemetadata.largest_seqno = file->fd.largest_seqno;
+          filemetadata.num_reads_sampled =
+              file->stats.num_reads_sampled.load(std::memory_order_relaxed);
+          filemetadata.being_compacted = file->being_compacted;
+          filemetadata.num_entries = file->num_entries;
+          filemetadata.num_deletions = file->num_deletions;
+          filemetadata.oldest_blob_file_number = file->oldest_blob_file_number;
+          filemetadata.file_checksum = file->file_checksum;
+          filemetadata.file_checksum_func_name = file->file_checksum_func_name;
+          filemetadata.temperature = file->temperature;
+          filemetadata.oldest_ancester_time = file->TryGetOldestAncesterTime();
+          filemetadata.file_creation_time = file->TryGetFileCreationTime();
+          filemetadata.sub_tier = tier_no;
+        }  // end of each sub tier file
+      }    // end of each sub tier
+    }      // end of each level
   }
 }
 

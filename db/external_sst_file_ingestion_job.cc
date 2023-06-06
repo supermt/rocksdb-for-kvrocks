@@ -462,20 +462,30 @@ Status ExternalSstFileIngestionJob::Run() {
       current_time = oldest_ancester_time =
           static_cast<uint64_t>(temp_current_time);
     }
-    FileMetaData f_metadata(
-        f.fd.GetNumber(), f.fd.GetPathId(), f.fd.GetFileSize(),
-        f.smallest_internal_key, f.largest_internal_key, f.assigned_seqno,
-        f.assigned_seqno, false, f.file_temperature, kInvalidBlobFileNumber,
-        oldest_ancester_time, current_time, f.file_checksum,
-        f.file_checksum_func_name, f.unique_id);
-    f_metadata.temperature = f.file_temperature;
+
     if (ingestion_options_.sub_tier_mode) {
       auto current_subtier_no =
           super_version->current->storage_info()->NumLevelSubTier(
               f.picked_level);
+      FileMetaData f_metadata(
+          f.fd.GetNumber(), f.fd.GetPathId(), f.fd.GetFileSize(),
+          f.smallest_internal_key, f.largest_internal_key, f.original_seqno,
+          f.original_seqno, false, f.file_temperature, kInvalidBlobFileNumber,
+          oldest_ancester_time, current_time, f.file_checksum,
+          f.file_checksum_func_name, f.unique_id);
+      f_metadata.temperature = f.file_temperature;
+      f_metadata.num_entries = f.num_entries;
+      f_metadata.num_deletions = f.num_range_deletions;
       edit_.AddFileToSublevel(f.picked_level, f_metadata,
                               (int)current_subtier_no);
     } else {
+      FileMetaData f_metadata(
+          f.fd.GetNumber(), f.fd.GetPathId(), f.fd.GetFileSize(),
+          f.smallest_internal_key, f.largest_internal_key, f.assigned_seqno,
+          f.assigned_seqno, false, f.file_temperature, kInvalidBlobFileNumber,
+          oldest_ancester_time, current_time, f.file_checksum,
+          f.file_checksum_func_name, f.unique_id);
+      f_metadata.temperature = f.file_temperature;
       edit_.AddFile(f.picked_level, f_metadata);
     }
   }

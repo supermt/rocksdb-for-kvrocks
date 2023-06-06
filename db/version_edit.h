@@ -331,11 +331,9 @@ struct FdWithKeyRange {
 struct LevelFilesBrief {
   size_t num_files;
   FdWithKeyRange* files;
-  double level_no;
   LevelFilesBrief() {
     num_files = 0;
     files = nullptr;
-    level_no = 0.0;
   }
 };
 

@@ -39,7 +39,7 @@ class SequenceIterWrapper : public InternalIterator {
   Status status() const override { return inner_iter_->status(); }
   void Next() override {
     num_itered_++;
-    inner_iter_->Next();
+    inner_iter_->Next(); // this is a Level Iterator
   }
   void Seek(const Slice& target) override {
     if (!need_count_entries_) {
@@ -322,7 +322,7 @@ class CompactionIterator {
   static std::unique_ptr<PrefetchBufferCollection>
   CreatePrefetchBufferCollectionIfNeeded(const CompactionProxy* compaction);
 
-  SequenceIterWrapper input_;
+  SequenceIterWrapper input_; //Level Iterator
   const Comparator* cmp_;
   MergeHelper* merge_helper_;
   const std::vector<SequenceNumber>* snapshots_;

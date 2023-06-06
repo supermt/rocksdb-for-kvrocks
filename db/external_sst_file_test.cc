@@ -314,14 +314,15 @@ TEST_F(ExternalSSTFileTest, FastIngest) {
   // a file.
   ASSERT_EQ(sst_file_writer.FileSize(), 0);
 
-  std::string origin_sst = "/home/supermt/000024.sst";
-  std::string origin_sst_2 = "/home/supermt/000025.sst";
-  std::string origin_sst_3 = "/home/supermt/000035.sst";
-  std::string origin_sst_4 = "/home/supermt/000061.sst";
+  std::string origin_sst = "/home/supermt/000018.sst";
+  std::string origin_sst_2 = "/home/supermt/000022.sst";
+  std::string origin_sst_3 = "/home/supermt/000024.sst";
+  std::string origin_sst_4 = "/home/supermt/000029.sst";
+  std::string origin_sst_5 = "/home/supermt/000030.sst";
 
   DestroyAndReopen(options);
 
-  auto s = FastAddFile({origin_sst_2}, 1);
+  auto s = FastAddFile({origin_sst_3, origin_sst}, 1);
 
   ASSERT_OK(s);
   //  s = FastAddFile({origin_sst_4}, 1);

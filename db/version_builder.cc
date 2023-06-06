@@ -754,14 +754,19 @@ class VersionBuilder::Rep {
     if (current_tier >= 0) {
       auto& tier_state = sub_tiers_[level][current_tier];
       auto& add_files = tier_state.added_files;
-      auto add_it = add_files.find(file_number);
-      if (add_it != add_files.end()) {
-        UnrefFile(add_it->second);
-        add_files.erase(add_it);
+      if (add_files.size() > 0) {
+        auto add_it = add_files.find(file_number);
+        if (add_it != add_files.end()) {
+          UnrefFile(add_it->second);
+          add_files.erase(add_it);
+        }
       }
 
       auto& del_files = tier_state.deleted_files;
-      assert(del_files.find(file_number) == del_files.end());
+      //      if (!del_files.empty()){
+      //
+      //      }
+      //      assert(del_files.find(file_number) == del_files.end());
       del_files.emplace(file_number);
 
       table_file_levels_[file_number] =
@@ -1349,7 +1354,7 @@ class VersionBuilder::Rep {
       target_tier_files +=
           MaybeAddSubTierFile(vstorage, level, sub_tier, added_file);
     }
-//    if (target_tier_files == 0) {
+    //    if (target_tier_files == 0) {
     //      vstorage->DeleteSubTier(level, sub_tier);
     //    }
   }
@@ -1368,7 +1373,6 @@ class VersionBuilder::Rep {
       added_files.push_back(pair.second);
     }
     std::sort(added_files.begin(), added_files.end(), cmp);
-
     for (auto added_file : added_files) {
       MaybeAddSubTierFile(vstorage, level, sub_tier, added_file);
     }

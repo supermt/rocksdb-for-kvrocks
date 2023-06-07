@@ -455,6 +455,7 @@ TEST_F(ExternalSSTFileTest, FastIngestSeek) {
     ASSERT_EQ(db_iter->value(), origin_it_2->value());
   }
   ASSERT_OK(s);
+  delete db_iter;
   //  std::cout << db_iter->key().ToString(true);
   //  std::cout << first_key_in_origin_3.ToString(true);
   //  std::cout << first_key_in_origin.ToString(true);
@@ -796,6 +797,7 @@ TEST_F(ExternalSSTFileTest, Basic) {
     auto db_iter = db_->NewIterator(ReadOptions());
     db_iter->SeekToFirst();
     assert(db_iter->Valid());
+    delete db_iter;
     DestroyAndRecreateExternalSSTFilesDir();
   } while (ChangeOptions(kSkipPlainTable | kSkipFIFOCompaction |
                          kRangeDelSkipConfigs));

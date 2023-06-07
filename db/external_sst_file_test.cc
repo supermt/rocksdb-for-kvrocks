@@ -369,6 +369,189 @@ TEST_F(ExternalSSTFileTest, FastIngest) {
   }
   DestroyAndRecreateExternalSSTFilesDir();
 }
+TEST_F(ExternalSSTFileTest, FastIngestSeek) {
+  Options options = CurrentOptions();
+
+  SstFileWriter sst_file_writer(EnvOptions(), options);
+
+  // Current file size should be 0 after sst_file_writer init and before open
+  // a file.
+  ASSERT_EQ(sst_file_writer.FileSize(), 0);
+
+  // file1.sst (0 => 99)
+  std::string file1 = sst_files_dir_ + "file1.sst";
+  ASSERT_OK(sst_file_writer.Open(file1));
+  for (int k = 0; k < 100; k++) {
+    ASSERT_OK(sst_file_writer.Put(Key(k), Key(k) + "_val"));
+  }
+  sst_file_writer.Finish();
+
+  std::string file2 = sst_files_dir_ + "file2.sst";
+  ASSERT_OK(sst_file_writer.Open(file2));
+  for (int k = 100; k < 200; k++) {
+    ASSERT_OK(sst_file_writer.Put(Key(k), Key(k) + "_val"));
+  }
+
+  sst_file_writer.Finish();
+
+  DestroyAndReopen(options);
+
+  SstFileReader sst_reader(options);
+  sst_reader.Open(file1);
+  auto origin_it = sst_reader.NewIterator(ReadOptions());
+
+  SstFileReader sst_reader_2(options);
+  sst_reader_2.Open(file2);
+  auto origin_it_2 = sst_reader.NewIterator(ReadOptions());
+
+  origin_it->SeekToFirst();
+  origin_it_2->SeekToFirst();
+  auto first_key_in_origin = origin_it->key();
+  auto first_key_in_origin_3 = origin_it_2->key();
+
+  assert(!first_key_in_origin.empty() && !first_key_in_origin_3.empty());
+  auto s = FastAddFile({file1, file2}, 1);
+
+  ASSERT_OK(s);
+
+  std::cout << "Before compaction" << std::endl;
+
+  auto versions = static_cast<DBImpl*>(db_)->GetVersionSet();
+  for (auto cfd : *versions->GetColumnFamilySet()) {
+    for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
+      int sub_tier_num =
+          cfd->current()->storage_info()->NumLevelSubTierFiles(i);
+      int level_num = cfd->current()->storage_info()->NumLevelFiles(i);
+
+      std::cout << "Level: " << i << "; # of Level Files " << level_num
+                << "; # of Sub tier: " << sub_tier_num << std::endl;
+    }
+  }
+  // Trigger compaction and reconfig
+  // No waiting, cancel all bg works, I think we can trigger this in remote
+  // server
+  s = dbfull()->SyncSubTiers(true);
+
+  dbfull()->TEST_WaitForBackgroundWork();
+  ASSERT_OK(s);
+  std::cout << "After compaction" << std::endl;
+  versions = static_cast<DBImpl*>(db_)->GetVersionSet();
+  for (auto cfd : *versions->GetColumnFamilySet()) {
+    for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
+      int sub_tier_num =
+          cfd->current()->storage_info()->NumLevelSubTierFiles(i);
+      int level_num = cfd->current()->storage_info()->NumLevelFiles(i);
+
+      std::cout << "Level: " << i << "; # of Level Files " << level_num
+                << "; # of Sub tier: " << sub_tier_num << std::endl;
+    }
+  }
+  auto db_iter = db_->NewIterator(ReadOptions());
+  db_iter->SeekToFirst();
+  if (db_iter->key() == first_key_in_origin) {
+    ASSERT_EQ(db_iter->value(), origin_it->value());
+  } else {
+    ASSERT_EQ(db_iter->key(), origin_it_2->key());
+    ASSERT_EQ(db_iter->value(), origin_it_2->value());
+  }
+  ASSERT_OK(s);
+  //  std::cout << db_iter->key().ToString(true);
+  //  std::cout << first_key_in_origin_3.ToString(true);
+  //  std::cout << first_key_in_origin.ToString(true);
+  //  db_->Close();
+
+  DestroyAndRecreateExternalSSTFilesDir();
+}
+
+TEST_F(ExternalSSTFileTest, FastIngestRead) {
+  Options options = CurrentOptions();
+
+  SstFileWriter sst_file_writer(EnvOptions(), options);
+
+  // Current file size should be 0 after sst_file_writer init and before open
+  // a file.
+  ASSERT_EQ(sst_file_writer.FileSize(), 0);
+
+  // file1.sst (0 => 99)
+  std::string file1 = sst_files_dir_ + "file1.sst";
+  ASSERT_OK(sst_file_writer.Open(file1));
+  for (int k = 0; k < 100; k++) {
+    ASSERT_OK(sst_file_writer.Put(Key(k), Key(k) + "_val"));
+  }
+  sst_file_writer.Finish();
+
+  std::string file2 = sst_files_dir_ + "file2.sst";
+  ASSERT_OK(sst_file_writer.Open(file2));
+  for (int k = 100; k < 200; k++) {
+    ASSERT_OK(sst_file_writer.Put(Key(k), Key(k) + "_val"));
+  }
+
+  sst_file_writer.Finish();
+
+  DestroyAndReopen(options);
+
+  SstFileReader sst_reader(options);
+  sst_reader.Open(file1);
+  auto origin_it = sst_reader.NewIterator(ReadOptions());
+
+  SstFileReader sst_reader_2(options);
+  sst_reader_2.Open(file2);
+  auto origin_it_2 = sst_reader.NewIterator(ReadOptions());
+
+  origin_it->SeekToFirst();
+  origin_it_2->SeekToFirst();
+  auto first_key_in_origin = origin_it->key();
+  auto first_key_in_origin_3 = origin_it_2->key();
+
+  assert(!first_key_in_origin.empty() && !first_key_in_origin_3.empty());
+  //  auto s = FastAddFile({file1, file2}, 1);
+  auto s = DeprecatedAddFile({file1, file2});
+  ASSERT_OK(s);
+
+  std::cout << "Before compaction" << std::endl;
+
+  auto versions = static_cast<DBImpl*>(db_)->GetVersionSet();
+  for (auto cfd : *versions->GetColumnFamilySet()) {
+    for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
+      int sub_tier_num =
+          cfd->current()->storage_info()->NumLevelSubTierFiles(i);
+      int level_num = cfd->current()->storage_info()->NumLevelFiles(i);
+
+      std::cout << "Level: " << i << "; # of Level Files " << level_num
+                << "; # of Sub tier: " << sub_tier_num << std::endl;
+    }
+  }
+  // Trigger compaction and reconfig
+  // No waiting, cancel all bg works, I think we can trigger this in remote
+  // server
+  s = dbfull()->SyncSubTiers(true);
+
+  dbfull()->TEST_WaitForBackgroundWork();
+  ASSERT_OK(s);
+  std::cout << "After compaction" << std::endl;
+  versions = static_cast<DBImpl*>(db_)->GetVersionSet();
+  for (auto cfd : *versions->GetColumnFamilySet()) {
+    for (int i = 0; i < cfd->current()->storage_info()->num_levels(); i++) {
+      int sub_tier_num =
+          cfd->current()->storage_info()->NumLevelSubTierFiles(i);
+      int level_num = cfd->current()->storage_info()->NumLevelFiles(i);
+
+      std::cout << "Level: " << i << "; # of Level Files " << level_num
+                << "; # of Sub tier: " << sub_tier_num << std::endl;
+    }
+  }
+  std::string value;
+  s = db_->Get(ReadOptions(), first_key_in_origin, &value);
+  ASSERT_OK(s);
+  s = db_->Get(ReadOptions(), first_key_in_origin_3, &value);
+  ASSERT_OK(s);
+  //  std::cout << db_iter->key().ToString(true);
+  //  std::cout << first_key_in_origin_3.ToString(true);
+  //  std::cout << first_key_in_origin.ToString(true);
+  //  db_->Close();
+
+  DestroyAndRecreateExternalSSTFilesDir();
+}
 
 TEST_F(ExternalSSTFileTest, Basic) {
   do {
@@ -610,6 +793,9 @@ TEST_F(ExternalSSTFileTest, Basic) {
       std::string value = Key(k) + "_val";
       ASSERT_EQ(Get(Key(k)), value);
     }
+    auto db_iter = db_->NewIterator(ReadOptions());
+    db_iter->SeekToFirst();
+    assert(db_iter->Valid());
     DestroyAndRecreateExternalSSTFilesDir();
   } while (ChangeOptions(kSkipPlainTable | kSkipFIFOCompaction |
                          kRangeDelSkipConfigs));

@@ -675,8 +675,8 @@ class VersionBuilder::Rep {
   }
 
   int GetCurrentTierForTableFile(uint64_t file_number) const {
-    auto it = table_file_levels_.find(file_number);
-    if (it != table_file_levels_.end()) {
+    auto it = table_file_tiers_.find(file_number);
+    if (it != table_file_tiers_.end()) {
       return it->second;
     }
 
@@ -767,6 +767,7 @@ class VersionBuilder::Rep {
       //
       //      }
       //      assert(del_files.find(file_number) == del_files.end());
+      assert(del_files.find(file_number) == del_files.end());
       del_files.emplace(file_number);
 
       table_file_levels_[file_number] =

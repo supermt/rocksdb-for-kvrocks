@@ -297,15 +297,15 @@ class VersionBuilder::Rep {
         UnrefFile(pair.second);
       }
     }
-    for (int level = 0; level < num_levels_; level++) {
-      for (int tier_no; tier_no < number_of_sub_tiers_in_level_[level];
-           tier_no++) {
-        const auto& added = sub_tiers_[level][tier_no].added_files;
-        for (auto& pair : added) {
-          UnrefFile(pair.second);
-        }
-      }
-    }
+//    for (int level = 0; level < num_levels_; level++) {
+//      for (int tier_no; tier_no < number_of_sub_tiers_in_level_[level];
+//           tier_no++) {
+//        const auto& added = sub_tiers_[level][tier_no].added_files;
+//        for (auto& pair : added) {
+//          UnrefFile(pair.second);
+//        }
+//      }
+//    }
 
     delete[] levels_;
   }

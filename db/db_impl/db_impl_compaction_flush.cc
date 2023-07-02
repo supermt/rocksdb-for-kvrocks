@@ -1602,6 +1602,12 @@ Status DBImpl::PauseBackgroundWork() {
   return Status::OK();
 }
 
+Status DBImpl::AddWal(const std::string& wal_name) {
+  auto new_number = versions_->NewFileNumber();
+  wal_manager_.ArchiveWALFile(wal_name, new_number);
+  return {};
+}
+
 Status DBImpl::ContinueBackgroundWork() {
   InstrumentedMutexLock guard_lock(&mutex_);
   if (bg_work_paused_ == 0) {

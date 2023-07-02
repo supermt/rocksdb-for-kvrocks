@@ -22,6 +22,10 @@ void WaitForBackgroundWork(DB* db) {
   (static_cast_with_check<DBImpl>(db->GetRootDB()))->WaitForCompact(true);
 }
 
+void AddWAL(DB* db, const std::string& fname) {
+  (static_cast_with_check<DBImpl>(db->GetRootDB()))->AddWal(fname);
+}
+
 Status DeleteFilesInRange(DB* db, ColumnFamilyHandle* column_family,
                           const Slice* begin, const Slice* end,
                           bool include_end) {

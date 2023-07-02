@@ -13,6 +13,7 @@
 #include "db/db_impl/db_impl.h"
 #include "db/error_handler.h"
 #include "db/event_helpers.h"
+#include "db/transaction_log_impl.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
 #include "monitoring/iostats_context_imp.h"
@@ -1602,9 +1603,36 @@ Status DBImpl::PauseBackgroundWork() {
   return Status::OK();
 }
 
-Status DBImpl::AddWal(const std::string& wal_name) {
+Status DBImpl::AddWal(const std::string& wal_name, ColumnFamilyHandle* cfh) {
   auto new_number = versions_->NewFileNumber();
   wal_manager_.ArchiveWALFile(wal_name, new_number);
+  //
+  //  Arena arena;
+  //  ReadOptions ro;
+  //  ro.total_order_seek = true;
+  //  std::vector<InternalIterator*> memtables;
+  //  std::vector<std::unique_ptr<FragmentedRangeTombstoneIterator>>
+  //      range_del_iters;
+  //  auto cfd = versions_->GetColumnFamilySet()->GetColumnFamily(cfh->GetID());
+  //  auto imm = cfd->imm();
+  //  auto mem = cfd->mem();
+  //  autovector<MemTable*> mems;
+  //  mems.push_back(mem);
+  //  for (auto m : *imm->GetMemtableList()) {
+  //    mems.push_back(m);
+  //  }
+  //
+  //  SstFileWriter sstFileWriter(EnvOptions(this->GetDBOptions()),
+  //  GetOptions(),
+  //                              cfh);
+  //  sstFileWriter.Open("temp.key");
+  //  for (MemTable* m : mems) {
+  //    memtables.push_back(m->NewIterator(ro, &arena));
+  //    memtables.back()->SeekToFirst();
+  //  }
+  //
+  //
+  //  return s;
   return {};
 }
 

@@ -97,6 +97,10 @@ int MemTableList::NumNotFlushed() const {
   return size;
 }
 
+std::list<MemTable*>* MemTableList::GetMemtableList() {
+  return &current_->memlist_;
+}
+
 int MemTableList::NumFlushed() const {
   return static_cast<int>(current_->memlist_history_.size());
 }

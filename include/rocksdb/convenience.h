@@ -493,7 +493,8 @@ Status StringToMap(const std::string& opts_str,
 // Request stopping background work, if wait is true wait until it's done
 void CancelAllBackgroundWork(DB* db, bool wait = false);
 void WaitForBackgroundWork(DB* db);
-void AddWAL(DB* db,const std::string& fname);
+void AddWAL(DB* db, const std::string& fname);
+void FlushMem(DB* db, ColumnFamilyHandle*);
 // Delete files which are entirely in the given range
 // Could leave some keys in the range which are in files which are not
 // entirely in the range. Also leaves L0 files regardless of whether they're

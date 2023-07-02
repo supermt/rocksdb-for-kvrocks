@@ -251,6 +251,8 @@ class MemTableList {
   // been flushed and logged.
   int NumNotFlushed() const;
 
+  std::list<MemTable*>* GetMemtableList();
+
   // Returns total number of memtables in the list that have been
   // completely flushed and logged.
   int NumFlushed() const;

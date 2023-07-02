@@ -402,7 +402,7 @@ class DBImpl : public DB {
 
   virtual Status PauseBackgroundWork() override;
   virtual Status ContinueBackgroundWork() override;
-  Status AddWal(const std::string& wal_name);
+  Status AddWal(const std::string& wal_name, ColumnFamilyHandle* cfh);
 
   virtual Status EnableAutoCompaction(
       const std::vector<ColumnFamilyHandle*>& column_family_handles) override;

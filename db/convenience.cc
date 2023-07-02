@@ -22,8 +22,15 @@ void WaitForBackgroundWork(DB* db) {
   (static_cast_with_check<DBImpl>(db->GetRootDB()))->WaitForCompact(true);
 }
 
+void FlushMem(DB* db, ColumnFamilyHandle* cfh) {
+  auto db_ptr = static_cast_with_check<DBImpl>(db->GetRootDB());
+  FlushOptions flush_options;
+  flush_options.wait = false;
+  flush_options.allow_write_stall = true;
+  auto s = db_ptr->Flush(flush_options, cfh);
+}
 void AddWAL(DB* db, const std::string& fname) {
-  (static_cast_with_check<DBImpl>(db->GetRootDB()))->AddWal(fname);
+  (static_cast_with_check<DBImpl>(db->GetRootDB()))->AddWal(fname, nullptr);
 }
 
 Status DeleteFilesInRange(DB* db, ColumnFamilyHandle* column_family,
